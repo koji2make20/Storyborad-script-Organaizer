@@ -1440,7 +1440,7 @@ export default function Home() {
                   title="カット区切りを追加"
                   aria-label="カット区切りを追加"
                 >
-                  ⊕
+                  ◀⊕
                 </button>
               )}
             </div>

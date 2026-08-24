@@ -657,19 +657,13 @@ body {
   top: -11px;
   opacity: 0;
   border: 0;
-  background: linear-gradient(
-    to bottom,
-    transparent calc(50% - 1px),
-    var(--accent) calc(50% - 1px),
-    var(--accent) calc(50% + 1px),
-    transparent calc(50% + 1px)
-  );
+  background: transparent;
   color: var(--accent);
   width: calc(100% - 10px);
   height: 22px;
   padding: 0;
-  text-align: right;
-  font-size: 20px;
+  text-align: center;
+  font-size: 18px;
   font-weight: 800;
   line-height: 21px;
   cursor: pointer;
