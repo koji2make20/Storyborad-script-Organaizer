@@ -629,12 +629,21 @@ body {
 .add-line {
   opacity: 0;
   border: 0;
-  background: var(--accent);
-  color: #fff;
-  border-radius: 50%;
-  width: 19px;
-  height: 19px;
+  background: linear-gradient(
+    to bottom,
+    transparent calc(50% - 1px),
+    var(--accent) calc(50% - 1px),
+    var(--accent) calc(50% + 1px),
+    transparent calc(50% + 1px)
+  );
+  color: var(--accent);
+  width: calc(100% - 10px);
+  height: 22px;
   padding: 0;
+  text-align: right;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 21px;
   cursor: pointer;
 }
 .cut-row:hover .add-line {

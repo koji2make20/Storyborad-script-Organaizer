@@ -1381,8 +1381,9 @@ export default function Home() {
                   className="add-line"
                   onClick={() => addCut(i)}
                   title="カット区切りを追加"
+                  aria-label="カット区切りを追加"
                 >
-                  ＋
+                  ⊕
                 </button>
               )}
             </div>
