@@ -38,10 +38,19 @@ const sampleD = `\n\n\n[ミナ]ここに、まだ残ってたんだ。\n\n[レ�
 function readingFrames(text: string, cps: number) {
   let units = 0,
     fixed = 0;
-  for (const ch of text.replace(/^\s*[［\[][^\]］]+[\]］]/gm, "")) {
-    if (ch === "。" || ch === "\n") fixed += 12;
-    else if ("、，…".includes(ch)) fixed += 6;
-    else if ("！？!?".includes(ch)) fixed += 8;
+  const source = text.replace(/^\s*[［\[][^\]］]+[\]］]/gm, "");
+  if (source === "") fixed += 6;
+  for (const ch of source) {
+    if (ch === "\n") fixed += 6;
+    else if (
+      ch === " " ||
+      ch === "　" ||
+      ch === "、" ||
+      ch === "，" ||
+      ch === ","
+    )
+      fixed += 3;
+    else if ("。！？!?…".includes(ch)) fixed += 6;
     else if (
       "「」『』（）()".includes(ch) ||
       "ゃゅょぁぃぅぇぉゎャュョァィゥェォヮ".includes(ch)
@@ -201,9 +210,16 @@ export default function Home() {
     [breakPeriod, setBreakPeriod] = useState(false),
     [breakMarks, setBreakMarks] = useState(false),
     [breakEllipsis, setBreakEllipsis] = useState(false),
-    [selectedCutIds, setSelectedCutIds] = useState<Set<string>>(new Set());
+    [selectedCutIds, setSelectedCutIds] = useState<Set<string>>(new Set()),
+    [editingDurationId, setEditingDurationId] = useState<string | null>(null),
+    [durationDraft, setDurationDraft] = useState(""),
+    [splitDragging, setSplitDragging] = useState(false),
+    [speaking, setSpeaking] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null),
     cutLayerRef = useRef<HTMLDivElement>(null),
+    workspaceRef = useRef<HTMLElement>(null),
+    actionRef = useRef<HTMLTextAreaElement>(null),
+    dialogueRef = useRef<HTMLTextAreaElement>(null),
     dragAnchorLine = useRef(0),
     dragStartLines = useRef<Map<string, number>>(new Map());
   const lines = Math.max(
@@ -250,7 +266,11 @@ export default function Home() {
     return list;
   }, [dialogue]);
 
-  const sync = (side: "action" | "dialogue", value: string) => {
+  const sync = (
+    side: "action" | "dialogue",
+    value: string,
+    caret: number | null,
+  ) => {
     const oldValue = side === "action" ? action : dialogue,
       oldLines = oldValue.split("\n"),
       own = value.split("\n"),
@@ -261,13 +281,18 @@ export default function Home() {
       oldLines[changed] === own[changed]
     )
       changed++;
+    let caretShift = 0;
     if (side === "dialogue" && delta > 0) {
       const prefix =
         parseDialogue(oldLines[Math.max(0, changed - 1)] ?? "")?.speaker ||
         parseDialogue(own[Math.max(0, changed - 1)] ?? "")?.speaker;
       if (prefix)
         for (let i = changed; i < Math.min(own.length, changed + delta); i++)
-          if (!own[i].trim()) own[i] = `[${prefix}]`;
+          if (!own[i].trim()) {
+            const tag = `[${prefix}]`;
+            own[i] = tag;
+            caretShift += tag.length;
+          }
     }
     if (delta !== 0)
       setCuts((current) => {
@@ -306,6 +331,14 @@ export default function Home() {
       setDialogue(next);
       setAction(other.join("\n"));
     }
+    if (caret != null)
+      requestAnimationFrame(() => {
+        const target =
+            side === "action" ? actionRef.current : dialogueRef.current,
+          position = Math.min(target?.value.length ?? 0, caret + caretShift);
+        target?.focus();
+        target?.setSelectionRange(position, position);
+      });
   };
   const normalize = () =>
     setCuts((v) =>
@@ -368,6 +401,33 @@ export default function Home() {
         ),
       );
   };
+  const resizeColumns = (e: React.PointerEvent) => {
+    if (!splitDragging || !workspaceRef.current) return;
+    const rect = workspaceRef.current.getBoundingClientRect(),
+      usable = Math.max(1, rect.width - 56 - 58 - 80),
+      left = e.clientX - rect.left - 28 - 58;
+    setSplit(Math.max(25, Math.min(75, (left / usable) * 100)));
+  };
+  const toggleSpeech = () => {
+    if (speaking) {
+      speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    const body = dialogueLines
+      .map(parseDialogue)
+      .filter(Boolean)
+      .map((item) => `${item!.speaker}。${item!.body}`)
+      .join("\n");
+    if (!body) return;
+    const utterance = new SpeechSynthesisUtterance(body);
+    utterance.lang = "ja-JP";
+    utterance.rate = 1;
+    utterance.onend = utterance.onerror = () => setSpeaking(false);
+    speechSynthesis.cancel();
+    speechSynthesis.speak(utterance);
+    setSpeaking(true);
+  };
   const beginDrag = (e: React.PointerEvent, id: string) => {
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -395,13 +455,14 @@ export default function Home() {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setResizeId(id);
   };
-  const editDuration = (cut: Cut, currentFrames: number) => {
-    const initial = plus(
-        cut.manual && cut.frames != null ? cut.frames : currentFrames,
-      ),
-      input = window.prompt("尺を「秒＋コマ」で入力してください", initial);
-    if (input == null) return;
-    const match = input
+  const startDurationEdit = (cut: Cut, currentFrames: number) => {
+    setDurationDraft(
+      plus(cut.manual && cut.frames != null ? cut.frames : currentFrames),
+    );
+    setEditingDurationId(cut.id);
+  };
+  const commitDuration = (cut: Cut) => {
+    const match = durationDraft
       .trim()
       .replaceAll("＋", "+")
       .match(/^(\d+)(?:\+(\d+))?$/);
@@ -418,6 +479,7 @@ export default function Home() {
         item.id === cut.id ? { ...item, frames, manual: true } : item,
       ),
     );
+    setEditingDurationId(null);
   };
   const patternRegex = (pattern: string) => {
     const a = pattern.indexOf("A"),
@@ -958,11 +1020,17 @@ export default function Home() {
             20,
             "#444",
           );
+        let previousSpeaker = "";
         const dtext = dialogueLines
           .slice(s.start, s.end)
           .map(parseDialogue)
           .filter(Boolean)
-          .map((p) => `[${p!.speaker}]\n${p!.body}`)
+          .map((p) => {
+            const name =
+              p!.speaker === previousSpeaker ? "" : `[${p!.speaker}]\n`;
+            previousSpeaker = p!.speaker;
+            return `${name}${p!.body}`;
+          })
           .join("\n");
         drawBoxText(
           ctx,
@@ -971,7 +1039,7 @@ export default function Home() {
           top + 18,
           square - 36,
           h - 36,
-          24,
+          30,
           "#111",
         );
         used += blocks;
@@ -1128,10 +1196,14 @@ export default function Home() {
           "--right-col": `${100 - split}fr`,
         } as React.CSSProperties
       }
-      onPointerMove={dragMove}
+      onPointerMove={(e) => {
+        dragMove(e);
+        resizeColumns(e);
+      }}
       onPointerUp={() => {
         setDragId(null);
         setResizeId(null);
+        setSplitDragging(false);
       }}
     >
       <header className="topbar">
@@ -1218,16 +1290,9 @@ export default function Home() {
           <b>{cps.toFixed(1)}</b>
           <span>音/秒</span>
         </label>
-        <label>
-          左右幅 ↔
-          <input
-            type="range"
-            min="25"
-            max="75"
-            value={split}
-            onChange={(e) => setSplit(+e.target.value)}
-          />
-        </label>
+        <button className="speech-button" onClick={toggleSpeech}>
+          {speaking ? "■ 音声停止" : "▶ セリフ再生"}
+        </button>
         <label>
           文字
           <input
@@ -1242,6 +1307,7 @@ export default function Home() {
         </label>
       </section>
       <section
+        ref={workspaceRef}
         className={`workspace ${dragId || resizeId ? "is-dragging" : ""}`}
         style={{ "--editor-font": `${fontSize}px` } as React.CSSProperties}
       >
@@ -1263,6 +1329,12 @@ export default function Home() {
                     const c = sortedCuts.find((x) => x.line === i);
                     if (c) beginDrag(e, c.id);
                   }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    const c = sortedCuts.find((x) => x.line === i);
+                    if (c)
+                      setCuts((value) => value.filter((x) => x.id !== c.id));
+                  }}
                 >
                   {sections.find((s) => s.start === i)?.name}
                 </button>
@@ -1276,13 +1348,27 @@ export default function Home() {
             <span>ACTION / SCENE</span>
           </div>
           <textarea
+            ref={actionRef}
             wrap="off"
             spellCheck={false}
             value={action}
-            onChange={(e) => sync("action", e.target.value)}
+            onChange={(e) =>
+              sync("action", e.target.value, e.target.selectionStart)
+            }
           />
         </div>
         <div ref={cutLayerRef} className="cut-layer">
+          <button
+            className="column-resizer"
+            title="左右の幅をドラッグして調整"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              setSplitDragging(true);
+            }}
+          >
+            ↔
+          </button>
           {Array.from({ length: lines }, (_, i) => (
             <div key={i} className="cut-row">
               {!sortedCuts.some((c) => c.line === i) && (
@@ -1303,10 +1389,13 @@ export default function Home() {
             <span>DIALOGUE · [話者]セリフ</span>
           </div>
           <textarea
+            ref={dialogueRef}
             wrap="off"
             spellCheck={false}
             value={dialogue}
-            onChange={(e) => sync("dialogue", e.target.value)}
+            onChange={(e) =>
+              sync("dialogue", e.target.value, e.target.selectionStart)
+            }
           />
         </div>
         {sortedCuts.map((cut) => {
@@ -1320,20 +1409,49 @@ export default function Home() {
                 top: `calc(18px + 42px + ${cut.line} * var(--editor-font) * 1.55)`,
                 height: `calc(${height} * var(--editor-font) * 1.55)`,
               }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setCuts((value) => value.filter((item) => item.id !== cut.id));
+                setSelectedCutIds((value) => {
+                  const next = new Set(value);
+                  next.delete(cut.id);
+                  return next;
+                });
+              }}
             >
               <div className="cut-overlay-band" />
               <div className="cut-overlay-rule" />
               <div className="cut-overlay-controls">
-                <button
-                  className="duration-handle"
-                  title="ドラッグで区切り移動・ダブルクリックで尺を編集"
-                  onPointerDown={(e) => beginDrag(e, cut.id)}
-                  onDoubleClick={() => editDuration(cut, section?.frames ?? 0)}
-                >
-                  {mode === "frames"
-                    ? plus(section?.frames ?? 0)
-                    : `${((section?.frames ?? 0) / FPS).toFixed(2)}秒`}
-                </button>
+                {editingDurationId === cut.id ? (
+                  <input
+                    className="duration-handle duration-input"
+                    value={durationDraft}
+                    autoFocus
+                    onChange={(e) => setDurationDraft(e.target.value)}
+                    onBlur={() => commitDuration(cut)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitDuration(cut);
+                      if (e.key === "Escape") setEditingDurationId(null);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <button
+                    className="duration-handle"
+                    title="ドラッグで移動・ダブルクリックで尺を編集・右クリックで削除"
+                    onPointerDown={(e) => beginDrag(e, cut.id)}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDragId(null);
+                      startDurationEdit(cut, section?.frames ?? 0);
+                    }}
+                  >
+                    {mode === "frames"
+                      ? plus(section?.frames ?? 0)
+                      : `${((section?.frames ?? 0) / FPS).toFixed(2)}秒`}
+                  </button>
+                )}
                 <button
                   className="overlay-resize"
                   title="ドラッグして幅を変更"

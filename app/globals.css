@@ -252,12 +252,18 @@
   gap: 7px;
   font-size: 13px;
 }
-.is-dragging .cut-overlay-rule {
+.is-dragging .cut-overlay.selected .cut-overlay-rule {
   height: 3px;
 }
-.is-dragging .duration-handle {
+.is-dragging .cut-overlay.selected .duration-handle {
   background: #b94c32;
   color: #fff;
+}
+.duration-input {
+  width: 76px;
+  outline: 2px solid #e4a698;
+  cursor: text;
+  text-align: center;
 }
 .editor-panel textarea {
   padding-top: 0 !important;
@@ -495,7 +501,10 @@ body {
 .workspace {
   position: relative;
   display: grid;
-  grid-template-columns: 58px 1fr 80px 1fr;
+  grid-template-columns: 58px minmax(0, var(--left-col)) 80px minmax(
+      0,
+      var(--right-col)
+    );
   flex: 1;
   min-height: 620px;
   padding: 18px 28px 28px;
@@ -587,10 +596,37 @@ body {
   background-color: #fffdfa;
 }
 .cut-layer {
+  position: relative;
   padding-top: 54px;
   background: #f0eee8;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+}
+.column-resizer {
+  position: absolute;
+  z-index: 7;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 42px;
+  height: 27px;
+  border: 1px solid #c7c1b7;
+  border-radius: 6px;
+  background: #fff;
+  color: #873b2b;
+  font-weight: 800;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.speech-button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--accent2);
+  padding: 7px 11px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
 }
 .cut-row {
   display: flex;
