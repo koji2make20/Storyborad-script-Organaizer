@@ -157,13 +157,13 @@
   position: absolute;
   top: 0;
   right: -82px;
-  width: 76px;
+  width: 102px;
   height: 0;
   pointer-events: none;
 }
 .duration-handle {
   position: absolute;
-  right: 0;
+  right: 24px;
   top: -13px;
   z-index: 2;
   height: 25px;
@@ -180,19 +180,35 @@
 }
 .overlay-resize {
   position: absolute;
-  right: 22px;
+  right: 0;
+  top: -13px;
   z-index: 3;
-  width: 32px;
-  height: 18px;
+  width: 22px;
+  height: 25px;
   padding: 0;
   border: 0;
-  border-radius: 0 0 8px 8px;
+  border-radius: 5px;
   background: #b94c32;
   color: #fff;
   font-size: 10px;
-  line-height: 17px;
+  line-height: 24px;
   cursor: ns-resize;
   pointer-events: auto;
+}
+.cut-overlay.selected .cut-overlay-rule {
+  height: 3px;
+  box-shadow: 0 0 0 2px #f2b6a9;
+}
+.cut-badge.selected,
+.cut-overlay.selected .duration-handle {
+  background: #9b3925;
+  color: #fff;
+}
+.cut-badge,
+.duration-handle,
+.overlay-resize {
+  user-select: none;
+  touch-action: none;
 }
 .setting-help {
   margin: 0 0 12px;

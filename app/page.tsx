@@ -200,9 +200,12 @@ export default function Home() {
     [breakComma, setBreakComma] = useState(false),
     [breakPeriod, setBreakPeriod] = useState(false),
     [breakMarks, setBreakMarks] = useState(false),
-    [breakEllipsis, setBreakEllipsis] = useState(false);
+    [breakEllipsis, setBreakEllipsis] = useState(false),
+    [selectedCutIds, setSelectedCutIds] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null),
-    cutLayerRef = useRef<HTMLDivElement>(null);
+    cutLayerRef = useRef<HTMLDivElement>(null),
+    dragAnchorLine = useRef(0),
+    dragStartLines = useRef<Map<string, number>>(new Map());
   const lines = Math.max(
       action.split("\n").length,
       dialogue.split("\n").length,
@@ -228,7 +231,7 @@ export default function Home() {
           .slice(start, end)
           .filter((_, n) => !isTrimmed(start + n))
           .join("\n"),
-        auto = readingFrames(text, cps) + (endCut?.trimRows ?? 0) * 12;
+        auto = readingFrames(text, cps);
       return {
         start,
         end,
@@ -331,14 +334,21 @@ export default function Home() {
         { id: crypto.randomUUID(), name: after, line, trimRows: 0 },
       ].sort((a, b) => a.line - b.line);
     });
-  const moveCut = (id: string, line: number) =>
+  const moveCuts = (id: string, line: number) =>
     setCuts((v) => {
       const moving = v.find((c) => c.id === id);
       if (!moving) return v;
-      const without = v.filter((c) => c.id !== id && c.line !== line);
-      return [...without, { ...moving, line, manual: false }].sort(
-        (a, b) => a.line - b.line,
-      );
+      const ids = selectedCutIds.has(id) ? selectedCutIds : new Set([id]),
+        delta = line - dragAnchorLine.current,
+        occupied = new Set(v.filter((c) => !ids.has(c.id)).map((c) => c.line));
+      return v
+        .map((c) => {
+          if (!ids.has(c.id)) return c;
+          const start = dragStartLines.current.get(c.id) ?? c.line,
+            next = Math.max(1, Math.min(lines - 1, start + delta));
+          return occupied.has(next) ? c : { ...c, line: next, manual: false };
+        })
+        .sort((a, b) => a.line - b.line);
     });
   const dragMove = (e: React.PointerEvent) => {
     if ((!dragId && !resizeId) || !cutLayerRef.current) return;
@@ -350,7 +360,7 @@ export default function Home() {
           Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
         ),
       );
-    if (dragId) moveCut(dragId, row);
+    if (dragId) moveCuts(dragId, row);
     if (resizeId)
       setCuts((v) =>
         v.map((c) =>
@@ -361,6 +371,22 @@ export default function Home() {
   const beginDrag = (e: React.PointerEvent, id: string) => {
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const next = new Set(selectedCutIds);
+    if (e.shiftKey) {
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+    } else if (!next.has(id)) {
+      next.clear();
+      next.add(id);
+    }
+    if (!next.has(id)) return;
+    setSelectedCutIds(next);
+    dragAnchorLine.current = cuts.find((item) => item.id === id)?.line ?? 0;
+    dragStartLines.current = new Map(
+      cuts
+        .filter((item) => next.has(item.id))
+        .map((item) => [item.id, item.line]),
+    );
     setDragId(id);
   };
   const beginResize = (e: React.PointerEvent, id: string) => {
@@ -467,31 +493,87 @@ export default function Home() {
         setCps(Number(p.chars_per_sec ?? 8));
         setFontSize(Number(p.font_size ?? 15));
         setMode(Number(p.mode) === 1 ? "seconds" : "frames");
+        setDialoguePatterns(p.dialogue_patterns ?? ["A「B」", "A『B』"]);
+        const oldPunctuation = Boolean(p.break_at_punctuation);
+        setBreakComma(Boolean(p.break_at_comma ?? oldPunctuation));
+        setBreakPeriod(Boolean(p.break_at_period ?? oldPunctuation));
+        setBreakMarks(Boolean(p.break_at_exclamation_question));
+        setBreakEllipsis(Boolean(p.break_at_ellipsis));
+        const dialogueText = String(p.dialogue ?? ""),
+          rowAt = (position: unknown) =>
+            dialogueText
+              .slice(0, Math.max(0, Number(position) || 0))
+              .split("\n").length - 1;
         setCuts(
           (p.cuts ?? []).map(
             (
-              c: Cut & { block_no?: number; trim_rows?: number },
+              c: Cut & {
+                block?: number;
+                block_no?: number;
+                trim_rows?: number;
+                char_pos?: number;
+                trim_end_pos?: number;
+              },
               i: number,
             ) => ({
               ...c,
               id: c.id ?? crypto.randomUUID(),
               name: c.name ?? p.cut_names?.[i + 1] ?? String(i + 2),
-              line: c.line ?? c.block_no ?? 0,
-              trimRows: c.trimRows ?? c.trim_rows ?? 0,
+              line: c.line ?? c.block ?? c.block_no ?? rowAt(c.char_pos),
+              trimRows:
+                c.trimRows ??
+                c.trim_rows ??
+                Math.max(0, rowAt(c.trim_end_pos) - rowAt(c.char_pos)),
             }),
           ),
         );
+        setSelectedCutIds(new Set());
         return;
       }
       let text = "";
       if (ext === "docx") {
-        const module = await import("mammoth/mammoth.browser"),
-          mammoth = (module as any).default ?? module;
-        text = (
-          await mammoth.extractRawText({
-            arrayBuffer: await file.arrayBuffer(),
-          })
-        ).value;
+        const buffer = await file.arrayBuffer();
+        try {
+          const module = await import("mammoth/mammoth.browser"),
+            mammoth = (module as any).default ?? module;
+          text = (await mammoth.extractRawText({ arrayBuffer: buffer })).value;
+        } catch {
+          text = "";
+        }
+        if (!text.trim()) {
+          const { default: JSZip } = await import("jszip"),
+            zip = await JSZip.loadAsync(buffer),
+            targets = Object.keys(zip.files).filter(
+              (name) =>
+                name === "word/document.xml" ||
+                name.startsWith("word/header") ||
+                name.startsWith("word/footer"),
+            ),
+            paragraphs: string[] = [];
+          for (const name of targets) {
+            const xml = await zip.file(name)?.async("string");
+            if (!xml) continue;
+            const document = new DOMParser().parseFromString(
+              xml,
+              "application/xml",
+            );
+            for (const paragraph of Array.from(
+              document.getElementsByTagNameNS("*", "p"),
+            )) {
+              let value = "";
+              for (const node of Array.from(
+                paragraph.getElementsByTagName("*"),
+              )) {
+                if (node.localName === "t") value += node.textContent ?? "";
+                else if (node.localName === "tab") value += "\t";
+                else if (node.localName === "br" || node.localName === "cr")
+                  value += "\n";
+              }
+              if (value.trim()) paragraphs.push(value.trim());
+            }
+          }
+          text = paragraphs.join("\n");
+        }
         if (!text.trim())
           throw new Error("Word文書から文字を取得できませんでした。");
       } else if (ext === "pdf") {
@@ -1169,7 +1251,13 @@ export default function Home() {
             <div key={i} className="rail-row">
               {sections.find((s) => s.start === i) && (
                 <button
-                  className="cut-badge"
+                  className={`cut-badge ${
+                    sortedCuts.some(
+                      (item) => item.line === i && selectedCutIds.has(item.id),
+                    )
+                      ? "selected"
+                      : ""
+                  }`}
                   title="ドラッグで移動"
                   onPointerDown={(e) => {
                     const c = sortedCuts.find((x) => x.line === i);
@@ -1227,7 +1315,7 @@ export default function Home() {
           return (
             <div
               key={cut.id}
-              className="cut-overlay"
+              className={`cut-overlay ${selectedCutIds.has(cut.id) ? "selected" : ""}`}
               style={{
                 top: `calc(18px + 42px + ${cut.line} * var(--editor-font) * 1.55)`,
                 height: `calc(${height} * var(--editor-font) * 1.55)`,
@@ -1248,9 +1336,6 @@ export default function Home() {
                 </button>
                 <button
                   className="overlay-resize"
-                  style={{
-                    top: `calc(22px + ${height} * var(--editor-font) * 1.55)`,
-                  }}
                   title="ドラッグして幅を変更"
                   onPointerDown={(e) => beginResize(e, cut.id)}
                 >
