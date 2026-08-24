@@ -288,16 +288,15 @@ export default function Home() {
     let caretShift = 0;
     if (side === "dialogue" && delta > 0) {
       const prefix =
-        parseDialogue(oldLines[changed] ?? "")?.speaker ||
-        parseDialogue(oldLines[Math.max(0, changed - 1)] ?? "")?.speaker ||
-        parseDialogue(own[Math.max(0, changed - 1)] ?? "")?.speaker;
-      if (prefix)
-        for (let i = changed; i < Math.min(own.length, changed + delta); i++)
-          if (!own[i].trim()) {
-            const tag = `[${prefix}]`;
-            own[i] = tag;
-            caretShift += tag.length;
-          }
+          parseDialogue(oldLines[changed] ?? "")?.speaker ||
+          parseDialogue(oldLines[Math.max(0, changed - 1)] ?? "")?.speaker ||
+          parseDialogue(own[Math.max(0, changed - 1)] ?? "")?.speaker,
+        targetRow = value.slice(0, caret ?? 0).split("\n").length - 1;
+      if (prefix && own[targetRow]?.trim() && !parseDialogue(own[targetRow])) {
+        const tag = `[${prefix}]`;
+        own[targetRow] = tag + own[targetRow].trimStart();
+        caretShift = tag.length;
+      }
     }
     if (delta !== 0)
       setCuts((current) => {
