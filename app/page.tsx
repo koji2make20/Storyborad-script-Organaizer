@@ -1797,7 +1797,7 @@ export default function Home() {
               <b>{playbackRate.toFixed(2)}倍</b>
             </label>
             <div className="pitch-settings">
-              <b>話者別の音域</b>
+              <b>話者別の音声ピッチ</b>
               {speakers.map((speaker) => (
                 <label key={speaker}>
                   <span>[{speaker}]</span>
