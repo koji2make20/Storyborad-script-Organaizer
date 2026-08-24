@@ -156,8 +156,8 @@
 .cut-overlay-controls {
   position: absolute;
   top: 0;
-  right: 4px;
-  width: 120px;
+  right: -82px;
+  width: 76px;
   height: 0;
   pointer-events: none;
 }
@@ -167,7 +167,7 @@
   top: -13px;
   z-index: 2;
   height: 25px;
-  min-width: 86px;
+  min-width: 76px;
   padding: 2px 9px;
   border: 1px solid #9b3925;
   border-radius: 5px;
@@ -180,7 +180,7 @@
 }
 .overlay-resize {
   position: absolute;
-  right: 0;
+  right: 22px;
   z-index: 3;
   width: 32px;
   height: 18px;
@@ -193,6 +193,48 @@
   line-height: 17px;
   cursor: ns-resize;
   pointer-events: auto;
+}
+.setting-help {
+  margin: 0 0 12px;
+  color: #746c63;
+  font-size: 13px;
+}
+.pattern-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.pattern-list > div,
+.pattern-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pattern-list code {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #ddd5ca;
+  border-radius: 5px;
+  background: #f7f4ef;
+  color: #342f2a;
+}
+.pattern-add {
+  margin-bottom: 18px;
+}
+.pattern-add input {
+  flex: 1;
+}
+.break-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+.break-settings label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
 }
 .is-dragging .cut-overlay-rule {
   height: 3px;

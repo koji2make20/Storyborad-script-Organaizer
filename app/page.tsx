@@ -193,7 +193,14 @@ export default function Home() {
     [includeAction, setIncludeAction] = useState(false),
     [gridCount, setGridCount] = useState(6),
     [split, setSplit] = useState(50),
-    [speakerColors, setSpeakerColors] = useState<Record<string, string>>({});
+    [speakerColors, setSpeakerColors] = useState<Record<string, string>>({}),
+    [importSettingsOpen, setImportSettingsOpen] = useState(false),
+    [dialoguePatterns, setDialoguePatterns] = useState(["A「B」", "A『B』"]),
+    [patternDraft, setPatternDraft] = useState(""),
+    [breakComma, setBreakComma] = useState(false),
+    [breakPeriod, setBreakPeriod] = useState(false),
+    [breakMarks, setBreakMarks] = useState(false),
+    [breakEllipsis, setBreakEllipsis] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null),
     cutLayerRef = useRef<HTMLDivElement>(null);
   const lines = Math.max(
@@ -226,8 +233,7 @@ export default function Home() {
         start,
         end,
         name: i ? (cut?.name ?? String(i + 1)) : "1",
-        frames:
-          endCut?.manual && endCut.frames != null ? endCut.frames : auto,
+        frames: endCut?.manual && endCut.frames != null ? endCut.frames : auto,
       };
     });
   }, [sortedCuts, lines, dialogue, cps]);
@@ -363,6 +369,90 @@ export default function Home() {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setResizeId(id);
   };
+  const editDuration = (cut: Cut, currentFrames: number) => {
+    const initial = plus(
+        cut.manual && cut.frames != null ? cut.frames : currentFrames,
+      ),
+      input = window.prompt("尺を「秒＋コマ」で入力してください", initial);
+    if (input == null) return;
+    const match = input
+      .trim()
+      .replaceAll("＋", "+")
+      .match(/^(\d+)(?:\+(\d+))?$/);
+    if (!match || (match[2] != null && Number(match[2]) >= FPS)) {
+      window.alert("例：4+12 の形式で入力してください（コマは0〜23）。");
+      return;
+    }
+    const frames =
+      match[2] == null
+        ? Number(match[1])
+        : Number(match[1]) * FPS + Number(match[2]);
+    setCuts((value) =>
+      value.map((item) =>
+        item.id === cut.id ? { ...item, frames, manual: true } : item,
+      ),
+    );
+  };
+  const patternRegex = (pattern: string) => {
+    const a = pattern.indexOf("A"),
+      b = pattern.indexOf("B");
+    if (a < 0 || b <= a) return null;
+    const escape = (value: string) =>
+      value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(
+      `^\\s*${escape(pattern.slice(0, a))}(?<name>.+?)${escape(pattern.slice(a + 1, b))}(?<body>.*?)${escape(pattern.slice(b + 1))}\\s*$`,
+    );
+  };
+  const formatImportedDialogue = (name: string, body: string) => {
+    let value = body.trim();
+    if (breakEllipsis) value = value.replace(/(・・・|…+)/g, "$1\n");
+    if (breakComma) value = value.replace(/([、，,])/g, "$1\n");
+    if (breakPeriod) value = value.replace(/([。．.])/g, "$1\n");
+    if (breakMarks) value = value.replace(/([！？!?])/g, "$1\n");
+    return value
+      .split(/\n+/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => `[${name.trim()}]${line}`);
+  };
+  const splitImportedText = (text: string) => {
+    const left: string[] = [],
+      right: string[] = [];
+    for (const raw of text.replace(/\r/g, "").split("\n")) {
+      const line = raw.trim();
+      let recognized: { name: string; body: string } | null = null;
+      for (const pattern of dialoguePatterns) {
+        const match = patternRegex(pattern)?.exec(line);
+        if (match?.groups?.name && match.groups.body != null) {
+          recognized = { name: match.groups.name, body: match.groups.body };
+          break;
+        }
+      }
+      const quoted = recognized
+        ? []
+        : [...line.matchAll(/([^\s「『」』]{1,20})\s*[「『](.*?)[」』]/g)];
+      if (recognized) {
+        for (const value of formatImportedDialogue(
+          recognized.name,
+          recognized.body,
+        )) {
+          left.push("");
+          right.push(value);
+        }
+      } else if (quoted.length) {
+        for (const match of quoted) {
+          for (const value of formatImportedDialogue(match[1], match[2])) {
+            left.push("");
+            right.push(value);
+          }
+        }
+      } else {
+        left.push(raw);
+        right.push("");
+      }
+    }
+    return { left, right };
+  };
   const importFile = async (file?: File) => {
     if (!file) return;
     setBusy(`${file.name} を解析中…`);
@@ -395,12 +485,15 @@ export default function Home() {
       }
       let text = "";
       if (ext === "docx") {
-        const mammoth = await import("mammoth/mammoth.browser");
+        const module = await import("mammoth/mammoth.browser"),
+          mammoth = (module as any).default ?? module;
         text = (
           await mammoth.extractRawText({
             arrayBuffer: await file.arrayBuffer(),
           })
         ).value;
+        if (!text.trim())
+          throw new Error("Word文書から文字を取得できませんでした。");
       } else if (ext === "pdf") {
         const pdfjs = await import("pdfjs-dist");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -459,21 +552,14 @@ export default function Home() {
         }
         text = pages.join("\n");
       } else text = await file.text();
-      const left: string[] = [],
-        right: string[] = [];
-      for (const raw of text.replace(/\r/g, "").split("\n")) {
-        const m = raw.trim().match(/^(.{1,20})[「『](.*?)[」』]?$/);
-        if (m) {
-          left.push("");
-          right.push(`[${m[1].trim()}]${m[2].trim()}`);
-        } else {
-          left.push(raw);
-          right.push("");
-        }
-      }
+      const { left, right } = splitImportedText(text);
       setAction(left.join("\n"));
       setDialogue(right.join("\n"));
       setCuts([]);
+    } catch (error) {
+      window.alert(
+        error instanceof Error ? error.message : "読み込みに失敗しました。",
+      );
     } finally {
       setBusy("");
     }
@@ -976,6 +1062,9 @@ export default function Home() {
         </div>
         <nav>
           <button onClick={() => fileRef.current?.click()}>読み込む</button>
+          <button onClick={() => setImportSettingsOpen(true)}>
+            読み込み設定
+          </button>
           <button className="primary" onClick={() => setMenu(!menu)}>
             保存・書き出し
           </button>
@@ -1149,13 +1238,10 @@ export default function Home() {
               <div className="cut-overlay-controls">
                 <button
                   className="duration-handle"
-                  title="ドラッグで区切り移動・ダブルクリックで削除"
+                  title="ドラッグで区切り移動・ダブルクリックで尺を編集"
                   onPointerDown={(e) => beginDrag(e, cut.id)}
-                  onDoubleClick={() =>
-                    setCuts((v) => v.filter((c) => c.id !== cut.id))
-                  }
+                  onDoubleClick={() => editDuration(cut, section?.frames ?? 0)}
                 >
-                  ↕{" "}
                   {mode === "frames"
                     ? plus(section?.frames ?? 0)
                     : `${((section?.frames ?? 0) / FPS).toFixed(2)}秒`}
@@ -1274,6 +1360,101 @@ export default function Home() {
                 onClick={runExport}
               >
                 書き出す
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {importSettingsOpen && (
+        <div
+          className="modal-backdrop"
+          onPointerDown={() => setImportSettingsOpen(false)}
+        >
+          <section
+            className="export-dialog import-dialog"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <h2>読み込み設定</h2>
+            <p className="setting-help">Aを名前、Bをセリフとして認識します。</p>
+            <div className="pattern-list">
+              {dialoguePatterns.map((pattern) => (
+                <div key={pattern}>
+                  <code>{pattern}</code>
+                  <button
+                    onClick={() =>
+                      setDialoguePatterns((value) =>
+                        value.filter((item) => item !== pattern),
+                      )
+                    }
+                  >
+                    削除
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="pattern-add">
+              <input
+                value={patternDraft}
+                onChange={(e) => setPatternDraft(e.target.value)}
+                placeholder="例：A「B」"
+              />
+              <button
+                onClick={() => {
+                  const value = patternDraft.trim();
+                  if (
+                    value.includes("A") &&
+                    value.includes("B") &&
+                    !dialoguePatterns.includes(value)
+                  ) {
+                    setDialoguePatterns((current) => [...current, value]);
+                    setPatternDraft("");
+                  }
+                }}
+              >
+                登録
+              </button>
+            </div>
+            <b>セリフ内の改行</b>
+            <div className="break-settings">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={breakComma}
+                  onChange={(e) => setBreakComma(e.target.checked)}
+                />
+                読点（、）
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={breakPeriod}
+                  onChange={(e) => setBreakPeriod(e.target.checked)}
+                />
+                句点（。）
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={breakMarks}
+                  onChange={(e) => setBreakMarks(e.target.checked)}
+                />
+                ！？
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={breakEllipsis}
+                  onChange={(e) => setBreakEllipsis(e.target.checked)}
+                />
+                …／・・・
+              </label>
+            </div>
+            <div className="dialog-actions">
+              <button
+                className="confirm"
+                onClick={() => setImportSettingsOpen(false)}
+              >
+                設定を閉じる
               </button>
             </div>
           </section>
