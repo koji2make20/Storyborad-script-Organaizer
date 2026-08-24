@@ -294,31 +294,7 @@ export default function Home() {
             caretShift += tag.length;
           }
     }
-    if (delta !== 0)
-      setCuts((current) => {
-        const shifted = current.map((c) => {
-          if (delta > 0 && c.line > changed)
-            return { ...c, line: c.line + delta };
-          if (delta < 0) {
-            const deletedTo = changed - delta;
-            if (c.line >= deletedTo)
-              return { ...c, line: Math.max(1, c.line + delta) };
-            if (c.line > changed) return { ...c, line: Math.max(1, changed) };
-          }
-          return c;
-        });
-        const byLine = new Map<number, Cut>();
-        for (const c of shifted)
-          byLine.set(c.line, {
-            ...(byLine.get(c.line) ?? c),
-            ...c,
-            trimRows: Math.max(
-              byLine.get(c.line)?.trimRows ?? 0,
-              c.trimRows ?? 0,
-            ),
-          });
-        return [...byLine.values()].sort((a, b) => a.line - b.line);
-      });
+    // 文字編集では区切り位置を動かさない。区切りはドラッグ操作だけで移動する。
     const other = (side === "action" ? dialogue : action).split("\n");
     if (delta > 0) other.splice(changed, 0, ...Array(delta).fill(""));
     else if (delta < 0) other.splice(changed, -delta);
@@ -1309,7 +1285,12 @@ export default function Home() {
       <section
         ref={workspaceRef}
         className={`workspace ${dragId || resizeId ? "is-dragging" : ""}`}
-        style={{ "--editor-font": `${fontSize}px` } as React.CSSProperties}
+        style={
+          {
+            "--editor-font": `${fontSize}px`,
+            "--editor-lines": lines,
+          } as React.CSSProperties
+        }
       >
         <aside className="rail">
           <span>CUT</span>
