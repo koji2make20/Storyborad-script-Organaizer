@@ -858,32 +858,33 @@ export default function Home() {
       for (let i = 0; i < sections.length; i++) {
         const s = sections[i],
           dir = root.folder(`C${String(i + 1).padStart(3, "0")}`)!,
-          entries = dialogueLines
-            .slice(s.start, s.end)
-            .map(parseDialogue)
-            .filter((x): x is NonNullable<typeof x> => !!x && !!x.body),
+          sectionLines = dialogueLines.slice(s.start, s.end),
           dialogFrames: object[] = [];
         let cursor = 0;
-        for (const item of entries) {
-          const len = Math.max(
-            1,
-            readingFrames(`[${item.speaker}]${item.body}`, cps),
-          );
-          dialogFrames.push({
-            frame: cursor,
-            data: [{ id: 0, values: [item.speaker, item.body] }],
-          });
-          for (let f = cursor + 1; f < cursor + len; f++)
+        for (let row = 0; row < sectionLines.length; row++) {
+          const item = parseDialogue(sectionLines[row]);
+          if (item?.body) {
+            const len = Math.max(
+              1,
+              readingFrames(`[${item.speaker}]${item.body}`, cps),
+            );
             dialogFrames.push({
-              frame: f,
-              data: [{ id: 0, values: ["SYMBOL_HYPHEN"] }],
+              frame: cursor,
+              data: [{ id: 0, values: [item.speaker, item.body] }],
             });
-          cursor += len;
-          const ci = speakerList.indexOf(item.speaker) % colors.length;
-          dir.file(
-            `[${safe(item.speaker)}]${safe(item.body)}.png`,
-            await boardPng(item.speaker, colors[ci]),
-          );
+            for (let f = cursor + 1; f < cursor + len; f++)
+              dialogFrames.push({
+                frame: f,
+                data: [{ id: 0, values: ["SYMBOL_HYPHEN"] }],
+              });
+            cursor += len;
+            const ci = speakerList.indexOf(item.speaker) % colors.length;
+            dir.file(
+              `[${safe(item.speaker)}]${safe(item.body)}.png`,
+              await boardPng(item.speaker, colors[ci]),
+            );
+          }
+          if (row < sectionLines.length - 1) cursor += 6;
         }
         const fields: any[] = [
             { fieldId: 0, tracks: [{ trackNo: 0, frames: [] }] },
@@ -940,35 +941,36 @@ export default function Home() {
         const s = sections[i],
           cutCode = xdtsCut(s.name),
           dir = root.folder(`C${cutCode}`)!,
-          entries = dialogueLines
-            .slice(s.start, s.end)
-            .map(parseDialogue)
-            .filter((x): x is NonNullable<typeof x> => !!x && !!x.body),
+          sectionLines = dialogueLines.slice(s.start, s.end),
           dialogFrames: object[] = [];
         let cursor = 0;
-        for (const item of entries) {
-          const len = Math.max(
-            1,
-            readingFrames(`[${item.speaker}]${item.body}`, cps),
-          );
-          dialogFrames.push({
-            frame: cursor,
-            data: [{ id: 0, values: [item.speaker, item.body] }],
-          });
-          for (let f = cursor + 1; f < cursor + len; f++)
+        for (let row = 0; row < sectionLines.length; row++) {
+          const item = parseDialogue(sectionLines[row]);
+          if (item?.body) {
+            const len = Math.max(
+              1,
+              readingFrames(`[${item.speaker}]${item.body}`, cps),
+            );
             dialogFrames.push({
-              frame: f,
-              data: [{ id: 0, values: ["SYMBOL_HYPHEN"] }],
+              frame: cursor,
+              data: [{ id: 0, values: [item.speaker, item.body] }],
             });
-          cursor += len;
-          dir.file(
-            `[${safe(item.speaker)}]${safe(item.body)}.png`,
-            await boardPng(
-              item.speaker,
-              speakerColors[item.speaker] ??
-                colors[speakers.indexOf(item.speaker) % colors.length],
-            ),
-          );
+            for (let f = cursor + 1; f < cursor + len; f++)
+              dialogFrames.push({
+                frame: f,
+                data: [{ id: 0, values: ["SYMBOL_HYPHEN"] }],
+              });
+            cursor += len;
+            dir.file(
+              `[${safe(item.speaker)}]${safe(item.body)}.png`,
+              await boardPng(
+                item.speaker,
+                speakerColors[item.speaker] ??
+                  colors[speakers.indexOf(item.speaker) % colors.length],
+              ),
+            );
+          }
+          if (row < sectionLines.length - 1) cursor += 6;
         }
         const fields: any[] = [
             { fieldId: 0, tracks: [{ trackNo: 0, frames: [] }] },
