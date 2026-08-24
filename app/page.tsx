@@ -294,7 +294,31 @@ export default function Home() {
             caretShift += tag.length;
           }
     }
-    // 文字編集では区切り位置を動かさない。区切りはドラッグ操作だけで移動する。
+    if (delta !== 0)
+      setCuts((current) => {
+        const shifted = current.map((cut) =>
+            cut.line > changed
+              ? {
+                  ...cut,
+                  line: Math.max(1, changed, cut.line + delta),
+                }
+              : cut,
+          ),
+          byLine = new Map<number, Cut>();
+        for (const cut of shifted) {
+          const existing = byLine.get(cut.line);
+          byLine.set(
+            cut.line,
+            existing
+              ? {
+                  ...existing,
+                  trimRows: Math.max(existing.trimRows ?? 0, cut.trimRows ?? 0),
+                }
+              : cut,
+          );
+        }
+        return [...byLine.values()].sort((a, b) => a.line - b.line);
+      });
     const other = (side === "action" ? dialogue : action).split("\n");
     if (delta > 0) other.splice(changed, 0, ...Array(delta).fill(""));
     else if (delta < 0) other.splice(changed, -delta);
