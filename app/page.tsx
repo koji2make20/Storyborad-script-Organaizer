@@ -706,7 +706,7 @@ export default function Home() {
           throw new Error("Word文書から文字を取得できませんでした。");
       } else if (ext === "pdf") {
         const pdfjs = await import("pdfjs-dist");
-        pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+        pdfjs.GlobalWorkerOptions.workerSrc = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/pdf.worker.min.mjs`;
         const pdf = await pdfjs.getDocument({
           data: new Uint8Array(await file.arrayBuffer()),
         }).promise;
