@@ -66,6 +66,19 @@ function readingFrames(text: string, cps: number) {
   return Math.max(0, Math.round((units / Math.max(0.1, cps)) * FPS) + fixed);
 }
 const plus = (f: number) => `${Math.floor(f / FPS)}+${f % FPS}`;
+const parseDurationFrames = (value: string) => {
+  const normalized = value
+    .trim()
+    .replace(/[０-９]/g, (digit) =>
+      String.fromCharCode(digit.charCodeAt(0) - 0xfee0),
+    )
+    .replaceAll("＋", "+");
+  const match = normalized.match(/^(\d+)(?:\+(\d+))?$/);
+  if (!match) return null;
+  return match[2] == null
+    ? Number(match[1])
+    : Number(match[1]) * FPS + Number(match[2]);
+};
 const runtime = (f: number) => {
   const s = Math.floor(f / FPS);
   return `${Math.floor(s / 60)}分${s % 60}秒${f % FPS}コマ`;
@@ -528,18 +541,11 @@ export default function Home() {
     setEditingDurationId(cut.id);
   };
   const commitDuration = (cut: Cut) => {
-    const match = durationDraft
-      .trim()
-      .replaceAll("＋", "+")
-      .match(/^(\d+)(?:\+(\d+))?$/);
-    if (!match || (match[2] != null && Number(match[2]) >= FPS)) {
-      window.alert("例：4+12 の形式で入力してください（コマは0〜23）。");
+    const frames = parseDurationFrames(durationDraft);
+    if (frames == null || !Number.isSafeInteger(frames)) {
+      setEditingDurationId(null);
       return;
     }
-    const frames =
-      match[2] == null
-        ? Number(match[1])
-        : Number(match[1]) * FPS + Number(match[2]);
     setCuts((value) =>
       value.map((item) =>
         item.id === cut.id ? { ...item, frames, manual: true } : item,
