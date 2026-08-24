@@ -40,9 +40,11 @@ function readingFrames(text: string, cps: number) {
     fixed = 0;
   const source = text.replace(/^[ \t　]*[［\[][^\]］]+[\]］]/gm, "");
   const blankOnly = source.trim() === "";
-  if (blankOnly) fixed += source.split("\n").length * 6;
+  // Empty grid rows are a fixed six frames each. Do not let whitespace in
+  // those rows add speech-speed-dependent or punctuation timing on top.
+  if (blankOnly) return source.split("\n").length * 6;
   for (const ch of source) {
-    if (ch === "\n" && !blankOnly) fixed += 6;
+    if (ch === "\n") fixed += 6;
     else if (
       ch === " " ||
       ch === "　" ||
