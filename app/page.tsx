@@ -38,7 +38,7 @@ const sampleD = `\n\n\n[ミナ]ここに、まだ残ってたんだ。\n\n[レ�
 function readingFrames(text: string, cps: number) {
   let units = 0,
     fixed = 0;
-  const source = text.replace(/^\s*[［\[][^\]］]+[\]］]/gm, "");
+  const source = text.replace(/^[ \t　]*[［\[][^\]］]+[\]］]/gm, "");
   if (source === "") fixed += 6;
   for (const ch of source) {
     if (ch === "\n") fixed += 6;
@@ -224,6 +224,10 @@ export default function Home() {
     workspaceRef = useRef<HTMLElement>(null),
     actionRef = useRef<HTMLTextAreaElement>(null),
     dialogueRef = useRef<HTMLTextAreaElement>(null),
+    dialogueEnterRef = useRef<{
+      speaker: string;
+      inherit: boolean;
+    } | null>(null),
     dragAnchorLine = useRef(0),
     dragStartLines = useRef<Map<string, number>>(new Map());
   const lines = Math.max(
@@ -287,16 +291,19 @@ export default function Home() {
       changed++;
     let caretShift = 0;
     if (side === "dialogue" && delta > 0) {
-      const prefix =
-          parseDialogue(oldLines[changed] ?? "")?.speaker ||
-          parseDialogue(oldLines[Math.max(0, changed - 1)] ?? "")?.speaker ||
-          parseDialogue(own[Math.max(0, changed - 1)] ?? "")?.speaker,
+      const enter = dialogueEnterRef.current,
         targetRow = value.slice(0, caret ?? 0).split("\n").length - 1;
-      if (prefix && own[targetRow]?.trim() && !parseDialogue(own[targetRow])) {
-        const tag = `[${prefix}]`;
+      if (
+        enter?.inherit &&
+        enter.speaker &&
+        own[targetRow]?.trim() &&
+        !parseDialogue(own[targetRow])
+      ) {
+        const tag = `[${enter.speaker}]`;
         own[targetRow] = tag + own[targetRow].trimStart();
         caretShift = tag.length;
       }
+      dialogueEnterRef.current = null;
     }
     if (delta !== 0)
       setCuts((current) => {
@@ -1436,6 +1443,28 @@ export default function Home() {
             wrap="off"
             spellCheck={false}
             value={dialogue}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || e.shiftKey) {
+                dialogueEnterRef.current = null;
+                return;
+              }
+              const value = e.currentTarget.value,
+                position = e.currentTarget.selectionStart,
+                lineStart = value.lastIndexOf("\n", position - 1) + 1,
+                foundEnd = value.indexOf("\n", position),
+                lineEnd = foundEnd < 0 ? value.length : foundEnd,
+                line = value.slice(lineStart, lineEnd),
+                parsed = parseDialogue(line),
+                close = Math.max(line.indexOf("]"), line.indexOf("］")),
+                cursorInsideBody = close >= 0 && position > lineStart + close,
+                textAfterCursor = value.slice(position, lineEnd).trim();
+              dialogueEnterRef.current = {
+                speaker: parsed?.speaker ?? "",
+                inherit: Boolean(
+                  parsed && cursorInsideBody && textAfterCursor.length > 0,
+                ),
+              };
+            }}
             onChange={(e) =>
               sync("dialogue", e.target.value, e.target.selectionStart)
             }
