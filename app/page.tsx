@@ -1329,6 +1329,11 @@ export default function Home() {
                     const c = sortedCuts.find((x) => x.line === i);
                     if (c) beginDrag(e, c.id);
                   }}
+                  onClick={(e) => {
+                    if (e.shiftKey) return;
+                    const c = sortedCuts.find((x) => x.line === i);
+                    if (c) setSelectedCutIds(new Set([c.id]));
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     const c = sortedCuts.find((x) => x.line === i);
@@ -1440,6 +1445,9 @@ export default function Home() {
                     className="duration-handle"
                     title="ドラッグで移動・ダブルクリックで尺を編集・右クリックで削除"
                     onPointerDown={(e) => beginDrag(e, cut.id)}
+                    onClick={(e) => {
+                      if (!e.shiftKey) setSelectedCutIds(new Set([cut.id]));
+                    }}
                     onDoubleClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();

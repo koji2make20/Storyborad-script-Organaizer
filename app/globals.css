@@ -195,10 +195,6 @@
   cursor: ns-resize;
   pointer-events: auto;
 }
-.cut-overlay.selected .cut-overlay-rule {
-  height: 3px;
-  box-shadow: 0 0 0 2px #f2b6a9;
-}
 .cut-badge.selected,
 .cut-overlay.selected .duration-handle {
   background: #9b3925;
@@ -251,9 +247,6 @@
   align-items: center;
   gap: 7px;
   font-size: 13px;
-}
-.is-dragging .cut-overlay.selected .cut-overlay-rule {
-  height: 3px;
 }
 .is-dragging .cut-overlay.selected .duration-handle {
   background: #b94c32;
