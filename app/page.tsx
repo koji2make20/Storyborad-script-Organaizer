@@ -214,7 +214,11 @@ export default function Home() {
     [editingDurationId, setEditingDurationId] = useState<string | null>(null),
     [durationDraft, setDurationDraft] = useState(""),
     [splitDragging, setSplitDragging] = useState(false),
-    [speaking, setSpeaking] = useState(false);
+    [speaking, setSpeaking] = useState(false),
+    [playbackOpen, setPlaybackOpen] = useState(false),
+    [playbackRate, setPlaybackRate] = useState(1),
+    [syncPlaybackRate, setSyncPlaybackRate] = useState(true),
+    [speakerPitch, setSpeakerPitch] = useState<Record<string, number>>({});
   const fileRef = useRef<HTMLInputElement>(null),
     cutLayerRef = useRef<HTMLDivElement>(null),
     workspaceRef = useRef<HTMLElement>(null),
@@ -284,6 +288,7 @@ export default function Home() {
     let caretShift = 0;
     if (side === "dialogue" && delta > 0) {
       const prefix =
+        parseDialogue(oldLines[changed] ?? "")?.speaker ||
         parseDialogue(oldLines[Math.max(0, changed - 1)] ?? "")?.speaker ||
         parseDialogue(own[Math.max(0, changed - 1)] ?? "")?.speaker;
       if (prefix)
@@ -414,19 +419,44 @@ export default function Home() {
       setSpeaking(false);
       return;
     }
-    const body = dialogueLines
-      .map(parseDialogue)
-      .filter(Boolean)
-      .map((item) => `${item!.speaker}。${item!.body}`)
-      .join("\n");
-    if (!body) return;
-    const utterance = new SpeechSynthesisUtterance(body);
-    utterance.lang = "ja-JP";
-    utterance.rate = 1;
-    utterance.onend = utterance.onerror = () => setSpeaking(false);
+    const cursor = dialogueRef.current?.selectionStart ?? 0,
+      before = dialogue.slice(0, cursor),
+      activeBefore = [...before.matchAll(/^\s*[［\[]([^\]］]+)[\]］]/gm)].at(
+        -1,
+      )?.[1],
+      remaining = dialogue.slice(cursor).split("\n"),
+      queue: { speaker: string; body: string }[] = [];
+    let activeSpeaker = activeBefore ?? "";
+    for (const line of remaining) {
+      const parsed = parseDialogue(line);
+      if (parsed) {
+        activeSpeaker = parsed.speaker;
+        if (parsed.body) queue.push(parsed);
+      } else if (line.trim()) {
+        queue.push({ speaker: activeSpeaker, body: line.trim() });
+      }
+    }
+    if (!queue.length) return;
     speechSynthesis.cancel();
-    speechSynthesis.speak(utterance);
     setSpeaking(true);
+    const playNext = (index: number) => {
+      if (index >= queue.length) {
+        setSpeaking(false);
+        return;
+      }
+      const item = queue[index],
+        utterance = new SpeechSynthesisUtterance(item.body);
+      utterance.lang = "ja-JP";
+      utterance.pitch = speakerPitch[item.speaker] ?? 1;
+      utterance.rate = Math.max(
+        0.5,
+        Math.min(2, playbackRate * (syncPlaybackRate ? cps / 8 : 1)),
+      );
+      utterance.onend = () => playNext(index + 1);
+      utterance.onerror = () => setSpeaking(false);
+      speechSynthesis.speak(utterance);
+    };
+    playNext(0);
   };
   const beginDrag = (e: React.PointerEvent, id: string) => {
     e.preventDefault();
@@ -1293,6 +1323,9 @@ export default function Home() {
         <button className="speech-button" onClick={toggleSpeech}>
           {speaking ? "■ 音声停止" : "▶ セリフ再生"}
         </button>
+        <button className="speech-button" onClick={() => setPlaybackOpen(true)}>
+          再生設定
+        </button>
         <label>
           文字
           <input
@@ -1670,6 +1703,72 @@ export default function Home() {
               <button
                 className="confirm"
                 onClick={() => setImportSettingsOpen(false)}
+              >
+                設定を閉じる
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {playbackOpen && (
+        <div
+          className="modal-backdrop"
+          onPointerDown={() => setPlaybackOpen(false)}
+        >
+          <section
+            className="export-dialog playback-dialog"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <h2>セリフ再生設定</h2>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={syncPlaybackRate}
+                onChange={(e) => setSyncPlaybackRate(e.target.checked)}
+              />
+              発話速度と尺に合わせる
+            </label>
+            <label>
+              再生速度
+              <input
+                type="range"
+                min="0.5"
+                max="2"
+                step="0.05"
+                value={playbackRate}
+                onChange={(e) => setPlaybackRate(Number(e.target.value))}
+              />
+              <b>{playbackRate.toFixed(2)}倍</b>
+            </label>
+            <div className="pitch-settings">
+              <b>話者別の音域</b>
+              {speakers.map((speaker) => (
+                <label key={speaker}>
+                  <span>[{speaker}]</span>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2"
+                    step="0.05"
+                    value={speakerPitch[speaker] ?? 1}
+                    onChange={(e) =>
+                      setSpeakerPitch((current) => ({
+                        ...current,
+                        [speaker]: Number(e.target.value),
+                      }))
+                    }
+                  />
+                  <b>{(speakerPitch[speaker] ?? 1).toFixed(2)}</b>
+                </label>
+              ))}
+            </div>
+            <p className="setting-help">
+              再生はセリフ欄のカーソル位置から始まり、話者名は読み上げません。句読点と改行の間はブラウザ音声に反映されます。
+            </p>
+            <div className="dialog-actions">
+              <button
+                className="confirm"
+                onClick={() => setPlaybackOpen(false)}
               >
                 設定を閉じる
               </button>
