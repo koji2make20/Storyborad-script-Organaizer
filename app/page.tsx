@@ -39,9 +39,10 @@ function readingFrames(text: string, cps: number) {
   let units = 0,
     fixed = 0;
   const source = text.replace(/^[ \t　]*[［\[][^\]］]+[\]］]/gm, "");
-  if (source === "") fixed += 6;
+  const blankOnly = source.trim() === "";
+  if (blankOnly) fixed += source.split("\n").length * 6;
   for (const ch of source) {
-    if (ch === "\n") fixed += 6;
+    if (ch === "\n" && !blankOnly) fixed += 6;
     else if (
       ch === " " ||
       ch === "　" ||
@@ -374,6 +375,13 @@ export default function Home() {
       }
       if (insert > 0)
         ordered[insert - 1] = { ...ordered[insert - 1], name: before };
+      if (insert === ordered.length) {
+        const numeric = Number.parseInt(prevName, 10);
+        before = prevName;
+        after = String(Number.isFinite(numeric) ? numeric + 1 : insert + 2);
+        if (insert > 0)
+          ordered[insert - 1] = { ...ordered[insert - 1], name: before };
+      }
       return [
         ...ordered,
         { id: crypto.randomUUID(), name: after, line, trimRows: 0 },
@@ -433,10 +441,17 @@ export default function Home() {
         -1,
       )?.[1],
       remaining = dialogue.slice(cursor).split("\n"),
+      startRow = before.split("\n").length - 1,
       queue: ({ speaker: string; body: string } | { pauseFrames: number })[] =
         [];
     let activeSpeaker = activeBefore ?? "";
-    for (const line of remaining) {
+    for (let offset = 0; offset < remaining.length; offset++) {
+      const line = remaining[offset],
+        row = startRow + offset,
+        trimmed = sortedCuts.some(
+          (cut) => row >= cut.line && row < cut.line + (cut.trimRows ?? 0),
+        );
+      if (trimmed) continue;
       const parsed = parseDialogue(line);
       if (parsed) {
         activeSpeaker = parsed.speaker;
