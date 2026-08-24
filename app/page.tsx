@@ -228,6 +228,7 @@ export default function Home() {
       speaker: string;
       inherit: boolean;
     } | null>(null),
+    playbackRunRef = useRef(0),
     dragAnchorLine = useRef(0),
     dragStartLines = useRef<Map<string, number>>(new Map());
   const lines = Math.max(
@@ -421,6 +422,7 @@ export default function Home() {
   };
   const toggleSpeech = () => {
     if (speaking) {
+      playbackRunRef.current += 1;
       speechSynthesis.cancel();
       setSpeaking(false);
       return;
@@ -431,7 +433,8 @@ export default function Home() {
         -1,
       )?.[1],
       remaining = dialogue.slice(cursor).split("\n"),
-      queue: { speaker: string; body: string }[] = [];
+      queue: ({ speaker: string; body: string } | { pauseFrames: number })[] =
+        [];
     let activeSpeaker = activeBefore ?? "";
     for (const line of remaining) {
       const parsed = parseDialogue(line);
@@ -440,18 +443,28 @@ export default function Home() {
         if (parsed.body) queue.push(parsed);
       } else if (line.trim()) {
         queue.push({ speaker: activeSpeaker, body: line.trim() });
-      }
+      } else queue.push({ pauseFrames: 6 });
     }
-    if (!queue.length) return;
+    while (queue.length && "pauseFrames" in queue.at(-1)!) queue.pop();
+    if (!queue.some((item) => "body" in item)) return;
+    const run = ++playbackRunRef.current;
     speechSynthesis.cancel();
     setSpeaking(true);
     const playNext = (index: number) => {
+      if (run !== playbackRunRef.current) return;
       if (index >= queue.length) {
         setSpeaking(false);
         return;
       }
-      const item = queue[index],
-        utterance = new SpeechSynthesisUtterance(item.body);
+      const item = queue[index];
+      if ("pauseFrames" in item) {
+        window.setTimeout(
+          () => playNext(index + 1),
+          (item.pauseFrames / FPS) * 1000,
+        );
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(item.body);
       utterance.lang = "ja-JP";
       utterance.pitch = speakerPitch[item.speaker] ?? 1;
       utterance.rate = Math.max(
