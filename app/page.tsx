@@ -418,16 +418,28 @@ export default function Home() {
       isTrimmed = (row: number) =>
         sortedCuts.some(
           (c) => row >= c.line && row < c.line + (c.trimRows ?? 0),
-        );
+        ),
+      // Calculate each automatic cut from cumulative script timing. This
+      // keeps the newline at a cut boundary (six frames) and also prevents
+      // per-cut rounding from changing the total when a divider is added.
+      cumulativeFrames = new Map(
+        marks.map((mark) => {
+          const text = dialogueLines
+            .slice(0, mark)
+            .filter((_, row) => !isTrimmed(row))
+            .join("\n");
+          return [mark, text === "" && mark === 0 ? 0 : readingFrames(text, cps)];
+        }),
+      );
     return marks.slice(0, -1).map((start, i) => {
       const cut = i ? sortedCuts[i - 1] : undefined,
         endCut = sortedCuts[i],
         end = marks[i + 1],
-        text = dialogueLines
-          .slice(start, end)
-          .filter((_, n) => !isTrimmed(start + n))
-          .join("\n"),
-        auto = readingFrames(text, cps);
+        auto = Math.max(
+          0,
+          (cumulativeFrames.get(end) ?? 0) -
+            (cumulativeFrames.get(start) ?? 0),
+        );
       return {
         start,
         end,
