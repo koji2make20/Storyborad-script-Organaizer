@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import { jsPDF } from "jspdf";
 
@@ -13,6 +13,16 @@ type Cut = {
   manual?: boolean;
 };
 type Section = { start: number; end: number; name: string; frames: number };
+type HistorySnapshot = {
+  action: string;
+  dialogue: string;
+  cuts: Cut[];
+  focusSide: "action" | "dialogue" | null;
+  selectionStart: number;
+  selectionEnd: number;
+  workspaceScrollTop: number;
+  workspaceScrollLeft: number;
+};
 type ExportKind =
   | "project"
   | "pdf"
@@ -287,6 +297,7 @@ export default function Home() {
     pendingSelectionRef = useRef<{
       side: "action" | "dialogue";
       position: number;
+      end?: number;
       scrollTop: number;
       scrollLeft: number;
       workspaceScrollTop: number;
@@ -294,6 +305,11 @@ export default function Home() {
     } | null>(null),
     playbackRunRef = useRef(0),
     playbackSelectionRef = useRef<{ start: number; end: number } | null>(null),
+    historyRef = useRef<HistorySnapshot[]>([]),
+    historyIndexRef = useRef(-1),
+    historyGroupRef = useRef<{ kind: "text" | "cuts"; at: number } | null>(
+      null,
+    ),
     dragAnchorLine = useRef(0),
     dragStartLines = useRef<Map<string, number>>(new Map());
   useLayoutEffect(() => {
@@ -304,7 +320,10 @@ export default function Home() {
     if (!target) return;
     const position = Math.min(target.value.length, pending.position);
     target.focus({ preventScroll: true });
-    target.setSelectionRange(position, position);
+    target.setSelectionRange(
+      position,
+      Math.min(target.value.length, pending.end ?? position),
+    );
     target.scrollTop = pending.scrollTop;
     target.scrollLeft = pending.scrollLeft;
     if (workspaceRef.current) {
@@ -313,6 +332,61 @@ export default function Home() {
     }
     pendingSelectionRef.current = null;
   }, [action, dialogue]);
+  useEffect(() => {
+    const active = document.activeElement,
+      focusSide =
+        active === actionRef.current
+          ? "action"
+          : active === dialogueRef.current
+            ? "dialogue"
+            : null,
+      focusTarget =
+        focusSide === "action"
+          ? actionRef.current
+          : focusSide === "dialogue"
+            ? dialogueRef.current
+            : null,
+      snapshot: HistorySnapshot = {
+        action,
+        dialogue,
+        cuts: cuts.map((cut) => ({ ...cut })),
+        focusSide,
+        selectionStart: focusTarget?.selectionStart ?? 0,
+        selectionEnd: focusTarget?.selectionEnd ?? 0,
+        workspaceScrollTop: workspaceRef.current?.scrollTop ?? 0,
+        workspaceScrollLeft: workspaceRef.current?.scrollLeft ?? 0,
+      },
+      history = historyRef.current,
+      current = history[historyIndexRef.current];
+    if (
+      current &&
+      current.action === action &&
+      current.dialogue === dialogue &&
+      JSON.stringify(current.cuts) === JSON.stringify(cuts)
+    )
+      return;
+    const kind: "text" | "cuts" =
+        current &&
+        (current.action !== action || current.dialogue !== dialogue)
+          ? "text"
+          : "cuts",
+      now = performance.now(),
+      group = historyGroupRef.current,
+      canGroup =
+        historyIndexRef.current === history.length - 1 &&
+        group?.kind === kind &&
+        now - group.at < 350;
+    if (canGroup && history.length > 1) {
+      history[historyIndexRef.current] = snapshot;
+    } else {
+      const next = history.slice(0, historyIndexRef.current + 1);
+      next.push(snapshot);
+      if (next.length > 200) next.shift();
+      historyRef.current = next;
+      historyIndexRef.current = next.length - 1;
+    }
+    historyGroupRef.current = { kind, at: now };
+  }, [action, dialogue, cuts]);
   const lines = Math.max(
       action.split("\n").length,
       dialogue.split("\n").length,
@@ -443,6 +517,47 @@ export default function Home() {
         .sort((a, b) => a.line - b.line)
         .map((c, i) => ({ ...c, name: String(i + 2) })),
     );
+  const applyHistory = (nextIndex: number) => {
+    const history = historyRef.current,
+      snapshot = history[nextIndex];
+    if (!snapshot) return;
+    historyIndexRef.current = nextIndex;
+    historyGroupRef.current = null;
+    playbackRunRef.current += 1;
+    speechSynthesis.cancel();
+    setSpeaking(false);
+    setAction(snapshot.action);
+    setDialogue(snapshot.dialogue);
+    setCuts(snapshot.cuts.map((cut) => ({ ...cut })));
+    if (snapshot.focusSide) {
+      const target =
+        snapshot.focusSide === "action"
+          ? actionRef.current
+          : dialogueRef.current;
+      pendingSelectionRef.current = {
+        side: snapshot.focusSide,
+        position: snapshot.selectionStart,
+        end: snapshot.selectionEnd,
+        scrollTop: target?.scrollTop ?? 0,
+        scrollLeft: target?.scrollLeft ?? 0,
+        workspaceScrollTop: snapshot.workspaceScrollTop,
+        workspaceScrollLeft: snapshot.workspaceScrollLeft,
+      };
+    }
+  };
+  const handleHistoryKeyDown = (e: React.KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.nativeEvent.isComposing)
+      return;
+    if (e.target instanceof HTMLInputElement) return;
+    const key = e.key.toLowerCase(),
+      undo = key === "z" && !e.shiftKey,
+      redo = key === "y" || (key === "z" && e.shiftKey);
+    if (!undo && !redo) return;
+    e.preventDefault();
+    applyHistory(
+      historyIndexRef.current + (redo ? 1 : -1),
+    );
+  };
   const addCut = (line: number) =>
     setCuts((v) => {
       if (v.some((c) => c.line === line)) return v;
@@ -1399,6 +1514,7 @@ export default function Home() {
         setResizeId(null);
         setSplitDragging(false);
       }}
+      onKeyDownCapture={handleHistoryKeyDown}
     >
       <header className="topbar">
         <div className="brand">
