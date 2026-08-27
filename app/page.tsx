@@ -13,6 +13,7 @@ type Cut = {
   manual?: boolean;
 };
 type Section = { start: number; end: number; name: string; frames: number };
+type VoicevoxStyle = { id: number; name: string; speaker: string };
 type HistorySnapshot = {
   action: string;
   dialogue: string;
@@ -285,7 +286,16 @@ export default function Home() {
     [playbackOpen, setPlaybackOpen] = useState(false),
     [playbackRate, setPlaybackRate] = useState(1),
     [syncPlaybackRate, setSyncPlaybackRate] = useState(true),
-    [speakerPitch, setSpeakerPitch] = useState<Record<string, number>>({});
+    [speakerPitch, setSpeakerPitch] = useState<Record<string, number>>({}),
+    [playbackEngine, setPlaybackEngine] = useState<"browser" | "voicevox">(
+      "browser",
+    ),
+    [voicevoxUrl, setVoicevoxUrl] = useState("http://127.0.0.1:50021"),
+    [voicevoxStatus, setVoicevoxStatus] = useState("未接続"),
+    [voicevoxStyles, setVoicevoxStyles] = useState<VoicevoxStyle[]>([]),
+    [voicevoxSpeakerStyles, setVoicevoxSpeakerStyles] = useState<
+      Record<string, number>
+    >({});
   const fileRef = useRef<HTMLInputElement>(null),
     cutLayerRef = useRef<HTMLDivElement>(null),
     workspaceRef = useRef<HTMLElement>(null),
@@ -306,6 +316,8 @@ export default function Home() {
     } | null>(null),
     playbackRunRef = useRef(0),
     playbackSelectionRef = useRef<{ start: number; end: number } | null>(null),
+    voicevoxAudioRef = useRef<HTMLAudioElement | null>(null),
+    voicevoxObjectUrlRef = useRef<string | null>(null),
     historyRef = useRef<HistorySnapshot[]>([]),
     historyIndexRef = useRef(-1),
     historyGroupRef = useRef<{ kind: "text" | "cuts"; at: number } | null>(
@@ -633,6 +645,49 @@ export default function Home() {
       left = e.clientX - actionRect.left;
     setSplit(Math.max(25, Math.min(75, (left / usable) * 100)));
   };
+  const stopVoicevoxAudio = () => {
+    voicevoxAudioRef.current?.pause();
+    voicevoxAudioRef.current = null;
+    if (voicevoxObjectUrlRef.current) {
+      URL.revokeObjectURL(voicevoxObjectUrlRef.current);
+      voicevoxObjectUrlRef.current = null;
+    }
+  };
+  const connectVoicevox = async () => {
+    const base = voicevoxUrl.trim().replace(/\/+$/, "");
+    setVoicevoxStatus("接続中…");
+    try {
+      const response = await fetch(`${base}/speakers`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const values = (await response.json()) as {
+        name: string;
+        styles: { id: number; name: string }[];
+      }[];
+      const styles = values.flatMap((voice) =>
+        voice.styles.map((style) => ({
+          id: style.id,
+          name: style.name,
+          speaker: voice.name,
+        })),
+      );
+      if (!styles.length) throw new Error("話者が見つかりません");
+      setVoicevoxStyles(styles);
+      setVoicevoxSpeakerStyles((current) => {
+        const next = { ...current };
+        for (const speaker of speakers)
+          if (next[speaker] == null) next[speaker] = styles[0].id;
+        return next;
+      });
+      setVoicevoxStatus(`接続済み（${styles.length}スタイル）`);
+      setPlaybackEngine("voicevox");
+    } catch (error) {
+      setVoicevoxStyles([]);
+      setPlaybackEngine("browser");
+      setVoicevoxStatus(
+        `接続失敗：${error instanceof Error ? error.message : "VOICEVOXを確認してください"}`,
+      );
+    }
+  };
   const toggleSpeech = () => {
     const restoreSelection = () => {
       const selection = playbackSelectionRef.current,
@@ -645,6 +700,7 @@ export default function Home() {
     if (speaking) {
       playbackRunRef.current += 1;
       speechSynthesis.cancel();
+      stopVoicevoxAudio();
       setSpeaking(false);
       restoreSelection();
       return;
@@ -703,8 +759,9 @@ export default function Home() {
     playbackSelectionRef.current = { start: cursor, end: originalEnd };
     const run = ++playbackRunRef.current;
     speechSynthesis.cancel();
+    stopVoicevoxAudio();
     setSpeaking(true);
-    const playNext = (index: number) => {
+    const playNext = async (index: number) => {
       if (run !== playbackRunRef.current) return;
       if (index >= queue.length) {
         setSpeaking(false);
@@ -722,6 +779,64 @@ export default function Home() {
       const target = dialogueRef.current;
       target?.focus({ preventScroll: true });
       target?.setSelectionRange(item.start, item.end);
+      if (playbackEngine === "voicevox") {
+        const styleId =
+          voicevoxSpeakerStyles[item.speaker] ?? voicevoxStyles[0]?.id;
+        if (styleId == null) {
+          setSpeaking(false);
+          restoreSelection();
+          window.alert("VOICEVOXへ接続し、話者スタイルを設定してください。");
+          return;
+        }
+        try {
+          const base = voicevoxUrl.trim().replace(/\/+$/, ""),
+            queryResponse = await fetch(
+              `${base}/audio_query?text=${encodeURIComponent(item.body)}&speaker=${styleId}`,
+              { method: "POST" },
+            );
+          if (!queryResponse.ok)
+            throw new Error(`音声クエリ HTTP ${queryResponse.status}`);
+          const query = (await queryResponse.json()) as Record<string, unknown>;
+          query.speedScale = Math.max(
+            0.5,
+            Math.min(2, playbackRate * (syncPlaybackRate ? cps / 8 : 1)),
+          );
+          const audioResponse = await fetch(
+            `${base}/synthesis?speaker=${styleId}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(query),
+            },
+          );
+          if (!audioResponse.ok)
+            throw new Error(`音声合成 HTTP ${audioResponse.status}`);
+          if (run !== playbackRunRef.current) return;
+          const objectUrl = URL.createObjectURL(await audioResponse.blob()),
+            audio = new Audio(objectUrl);
+          voicevoxObjectUrlRef.current = objectUrl;
+          voicevoxAudioRef.current = audio;
+          audio.onended = () => {
+            stopVoicevoxAudio();
+            void playNext(index + 1);
+          };
+          audio.onerror = () => {
+            stopVoicevoxAudio();
+            setSpeaking(false);
+            restoreSelection();
+          };
+          await audio.play();
+        } catch (error) {
+          if (run !== playbackRunRef.current) return;
+          stopVoicevoxAudio();
+          setSpeaking(false);
+          restoreSelection();
+          window.alert(
+            `VOICEVOXで再生できませんでした。\n${error instanceof Error ? error.message : "接続を確認してください"}`,
+          );
+        }
+        return;
+      }
       const utterance = new SpeechSynthesisUtterance(item.body);
       utterance.lang = "ja-JP";
       utterance.pitch = speakerPitch[item.speaker] ?? 1;
@@ -729,7 +844,7 @@ export default function Home() {
         0.5,
         Math.min(2, playbackRate * (syncPlaybackRate ? cps / 8 : 1)),
       );
-      utterance.onend = () => playNext(index + 1);
+      utterance.onend = () => void playNext(index + 1);
       utterance.onerror = () => {
         if (run !== playbackRunRef.current) return;
         setSpeaking(false);
@@ -737,7 +852,7 @@ export default function Home() {
       };
       speechSynthesis.speak(utterance);
     };
-    playNext(0);
+    void playNext(0);
   };
   const beginDrag = (e: React.PointerEvent, id: string) => {
     e.preventDefault();
@@ -2069,6 +2184,74 @@ export default function Home() {
             onPointerDown={(e) => e.stopPropagation()}
           >
             <h2>セリフ再生設定</h2>
+            <div className="voice-engine-settings">
+              <b>音声エンジン</b>
+              <div className="engine-options">
+                <label>
+                  <input
+                    type="radio"
+                    name="playback-engine"
+                    checked={playbackEngine === "browser"}
+                    onChange={() => setPlaybackEngine("browser")}
+                  />
+                  ブラウザ標準音声
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="playback-engine"
+                    checked={playbackEngine === "voicevox"}
+                    disabled={!voicevoxStyles.length}
+                    onChange={() => setPlaybackEngine("voicevox")}
+                  />
+                  VOICEVOX
+                </label>
+              </div>
+              <label className="voicevox-address">
+                <span>VOICEVOX Engine</span>
+                <input
+                  type="url"
+                  value={voicevoxUrl}
+                  spellCheck={false}
+                  onChange={(e) => setVoicevoxUrl(e.target.value)}
+                />
+                <button onClick={() => void connectVoicevox()}>接続確認</button>
+              </label>
+              <small
+                className={
+                  voicevoxStyles.length ? "connection-ok" : "connection-status"
+                }
+              >
+                {voicevoxStatus}
+              </small>
+              {voicevoxStyles.length > 0 && speakers.length > 0 && (
+                <div className="voicevox-mapping">
+                  <b>話者別VOICEVOXスタイル</b>
+                  {speakers.map((speaker) => (
+                    <label key={speaker}>
+                      <span>[{speaker}]</span>
+                      <select
+                        value={
+                          voicevoxSpeakerStyles[speaker] ?? voicevoxStyles[0].id
+                        }
+                        onChange={(e) =>
+                          setVoicevoxSpeakerStyles((current) => ({
+                            ...current,
+                            [speaker]: Number(e.target.value),
+                          }))
+                        }
+                      >
+                        {voicevoxStyles.map((style) => (
+                          <option key={style.id} value={style.id}>
+                            {style.speaker}（{style.name}）
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
             <label className="check">
               <input
                 type="checkbox"
@@ -2089,7 +2272,7 @@ export default function Home() {
               />
               <b>{playbackRate.toFixed(2)}倍</b>
             </label>
-            <div className="pitch-settings">
+            {playbackEngine === "browser" && <div className="pitch-settings">
               <b>話者別の音声ピッチ</b>
               {speakers.map((speaker) => (
                 <label key={speaker}>
@@ -2110,9 +2293,9 @@ export default function Home() {
                   <b>{(speakerPitch[speaker] ?? 1).toFixed(2)}</b>
                 </label>
               ))}
-            </div>
+            </div>}
             <p className="setting-help">
-              再生はセリフ欄のカーソル位置から始まり、話者名は読み上げません。句読点と改行の間はブラウザ音声に反映されます。
+              再生はセリフ欄のカーソル位置から始まり、話者名は読み上げません。VOICEVOXを使う場合は、VOICEVOXを起動してから接続確認を押してください。
             </p>
             <div className="dialog-actions">
               <button

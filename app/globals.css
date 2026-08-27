@@ -652,6 +652,75 @@ body {
 .playback-dialog input[type="range"] {
   flex: 1;
 }
+.voice-engine-settings {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid #ddd5ca;
+  border-radius: 8px;
+  background: #f7f4ef;
+}
+.engine-options {
+  display: flex;
+  gap: 18px;
+}
+.engine-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.voicevox-address {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.voicevox-address input {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #cfc8bd;
+  border-radius: 5px;
+  background: #fff;
+}
+.voicevox-address button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--accent2);
+  color: #fff;
+  cursor: pointer;
+}
+.connection-status,
+.connection-ok {
+  color: #8e4838;
+  font-size: 11px;
+}
+.connection-ok {
+  color: #26704b;
+}
+.voicevox-mapping {
+  display: grid;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid #ddd5ca;
+}
+.voicevox-mapping label {
+  display: grid;
+  grid-template-columns: 105px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.voicevox-mapping select {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid #cfc8bd;
+  border-radius: 5px;
+  background: #fff;
+}
 .pitch-settings {
   margin: 18px 0;
   padding-top: 14px;
