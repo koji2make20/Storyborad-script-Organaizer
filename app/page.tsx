@@ -31,6 +31,7 @@ type ExportKind =
   | "storyboard"
   | "srt"
   | "voicevox"
+  | "wav"
   | null;
 const FPS = 24;
 const colors = [
@@ -1588,6 +1589,134 @@ export default function Home() {
       setBusy("");
     }
   };
+  const encodePcmWav = (samples: Float32Array, sampleRate: number) => {
+    const buffer = new ArrayBuffer(44 + samples.length * 2),
+      view = new DataView(buffer),
+      write = (offset: number, value: string) => {
+        for (let i = 0; i < value.length; i++)
+          view.setUint8(offset + i, value.charCodeAt(i));
+      };
+    write(0, "RIFF");
+    view.setUint32(4, 36 + samples.length * 2, true);
+    write(8, "WAVE");
+    write(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    write(36, "data");
+    view.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) {
+      const value = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(44 + i * 2, value < 0 ? value * 32768 : value * 32767, true);
+    }
+    return buffer;
+  };
+  const exportVoicevoxWav = async (name: string) => {
+    if (!voicevoxStyles.length)
+      throw new Error(
+        "再生設定でVOICEVOXへ接続し、話者スタイルを設定してください。",
+      );
+    const queue: ({ speaker: string; body: string } | { pauseFrames: number })[] = [],
+      lines = dialogue.split("\n");
+    let activeSpeaker = "";
+    for (let row = 0; row < lines.length; row++) {
+      if (
+        sortedCuts.some(
+          (cut) => row >= cut.line && row < cut.line + (cut.trimRows ?? 0),
+        )
+      )
+        continue;
+      const parsed = parseDialogue(lines[row]);
+      if (parsed) {
+        activeSpeaker = parsed.speaker;
+        if (parsed.body)
+          queue.push({ speaker: parsed.speaker, body: parsed.body });
+      } else if (lines[row].trim()) {
+        queue.push({ speaker: activeSpeaker, body: lines[row].trim() });
+      } else queue.push({ pauseFrames: 6 });
+    }
+    while (queue.length && "pauseFrames" in queue.at(-1)!) queue.pop();
+    const speechCount = queue.filter((item) => "body" in item).length;
+    if (!speechCount) throw new Error("書き出すセリフがありません。");
+    const audioContext = new AudioContext(),
+      chunks: ({ audio: AudioBuffer } | { pauseSeconds: number })[] = [];
+    let completed = 0;
+    try {
+      const base = voicevoxUrl.trim().replace(/\/+$/, "");
+      for (const item of queue) {
+        if ("pauseFrames" in item) {
+          chunks.push({ pauseSeconds: item.pauseFrames / FPS });
+          continue;
+        }
+        const styleId =
+          voicevoxSpeakerStyles[item.speaker] ?? voicevoxStyles[0]?.id;
+        if (styleId == null) throw new Error(`[${item.speaker}]の話者設定がありません。`);
+        setBusy(`VOICEVOX音声を生成中… ${completed + 1} / ${speechCount}`);
+        const queryResponse = await fetch(
+          `${base}/audio_query?text=${encodeURIComponent(item.body)}&speaker=${styleId}`,
+          { method: "POST" },
+        );
+        if (!queryResponse.ok)
+          throw new Error(`音声クエリ HTTP ${queryResponse.status}`);
+        const query = (await queryResponse.json()) as Record<string, unknown>;
+        query.speedScale = Math.max(
+          0.5,
+          Math.min(2, playbackRate * (syncPlaybackRate ? cps / 8 : 1)),
+        );
+        const audioResponse = await fetch(`${base}/synthesis?speaker=${styleId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(query),
+        });
+        if (!audioResponse.ok)
+          throw new Error(`音声合成 HTTP ${audioResponse.status}`);
+        chunks.push({
+          audio: await audioContext.decodeAudioData(await audioResponse.arrayBuffer()),
+        });
+        completed++;
+      }
+      const sampleRate =
+          chunks.find((chunk): chunk is { audio: AudioBuffer } => "audio" in chunk)
+            ?.audio.sampleRate ?? 24000,
+        sampleCounts = chunks.map((chunk) =>
+          "pauseSeconds" in chunk
+            ? Math.round(chunk.pauseSeconds * sampleRate)
+            : Math.round(chunk.audio.duration * sampleRate),
+        ),
+        output = new Float32Array(sampleCounts.reduce((sum, value) => sum + value, 0));
+      let position = 0;
+      chunks.forEach((chunk, chunkIndex) => {
+        const length = sampleCounts[chunkIndex];
+        if ("audio" in chunk) {
+          const channels = Array.from(
+            { length: chunk.audio.numberOfChannels },
+            (_, channel) => chunk.audio.getChannelData(channel),
+          );
+          for (let i = 0; i < length; i++) {
+            const sourceIndex = Math.min(
+                channels[0].length - 1,
+                Math.floor((i / sampleRate) * chunk.audio.sampleRate),
+              ),
+              value = channels.reduce(
+                (sum, channel) => sum + channel[sourceIndex],
+                0,
+              );
+            output[position + i] = value / channels.length;
+          }
+        }
+        position += length;
+      });
+      setBusy("WAVファイルを作成中…");
+      download(`${name}.wav`, encodePcmWav(output, sampleRate), "audio/wav");
+    } finally {
+      await audioContext.close();
+      setBusy("");
+    }
+  };
   const openExport = (kind: ExportKind) => {
     setMenu(false);
     setExportKind(kind);
@@ -1625,6 +1754,16 @@ export default function Home() {
     else if (exportKind === "srt") download(`${name}.srt`, srt());
     else if (exportKind === "voicevox")
       download(`${name}.csv`, "\ufeff" + voicevox(), "text/csv;charset=utf-8");
+    else if (exportKind === "wav") {
+      try {
+        await exportVoicevoxWav(name);
+      } catch (error) {
+        setBusy("");
+        window.alert(
+          error instanceof Error ? error.message : "WAV書き出しに失敗しました。",
+        );
+      }
+    }
   };
 
   return (
@@ -1711,6 +1850,9 @@ export default function Home() {
               </button>
               <button onClick={() => openExport("voicevox")}>
                 VOICEVOX台本（CSV）
+              </button>
+              <button onClick={() => openExport("wav")}>
+                VOICEVOX音声（WAV）
               </button>
             </div>
           )}
@@ -2011,6 +2153,8 @@ export default function Home() {
                 ? "XDTS＋セリフボールド"
                 : exportKind === "storyboard"
                   ? "コンテ用画像"
+                  : exportKind === "wav"
+                    ? "VOICEVOX音声（WAV）"
                   : "保存・書き出し"}
             </h2>
             <label>
@@ -2021,6 +2165,11 @@ export default function Home() {
                 autoFocus
               />
             </label>
+            {exportKind === "wav" && (
+              <p className="setting-help">
+                再生設定で接続したVOICEVOXと話者スタイルを使用し、改行の間を含む一本のWAVを書き出します。
+              </p>
+            )}
             {exportKind === "xdts" && (
               <div className="color-settings">
                 <b>セリフボールドの色</b>
