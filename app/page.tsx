@@ -293,6 +293,7 @@ export default function Home() {
       workspaceScrollLeft: number;
     } | null>(null),
     playbackRunRef = useRef(0),
+    playbackSelectionRef = useRef<{ start: number; end: number } | null>(null),
     dragAnchorLine = useRef(0),
     dragStartLines = useRef<Map<string, number>>(new Map());
   useLayoutEffect(() => {
@@ -517,39 +518,73 @@ export default function Home() {
     setSplit(Math.max(25, Math.min(75, (left / usable) * 100)));
   };
   const toggleSpeech = () => {
+    const restoreSelection = () => {
+      const selection = playbackSelectionRef.current,
+        target = dialogueRef.current;
+      playbackSelectionRef.current = null;
+      if (!selection || !target) return;
+      target.focus({ preventScroll: true });
+      target.setSelectionRange(selection.start, selection.end);
+    };
     if (speaking) {
       playbackRunRef.current += 1;
       speechSynthesis.cancel();
       setSpeaking(false);
+      restoreSelection();
       return;
     }
     const cursor = dialogueRef.current?.selectionStart ?? 0,
+      originalEnd = dialogueRef.current?.selectionEnd ?? cursor,
       before = dialogue.slice(0, cursor),
       activeBefore = [...before.matchAll(/^\s*[［\[]([^\]］]+)[\]］]/gm)].at(
         -1,
       )?.[1],
       remaining = dialogue.slice(cursor).split("\n"),
       startRow = before.split("\n").length - 1,
-      queue: ({ speaker: string; body: string } | { pauseFrames: number })[] =
-        [];
-    let activeSpeaker = activeBefore ?? "";
+      queue: (
+        | { speaker: string; body: string; start: number; end: number }
+        | { pauseFrames: number }
+      )[] = [];
+    let activeSpeaker = activeBefore ?? "",
+      absoluteStart = cursor;
     for (let offset = 0; offset < remaining.length; offset++) {
       const line = remaining[offset],
+        lineStart = absoluteStart,
         row = startRow + offset,
         trimmed = sortedCuts.some(
           (cut) => row >= cut.line && row < cut.line + (cut.trimRows ?? 0),
         );
+      absoluteStart += line.length + (offset < remaining.length - 1 ? 1 : 0);
       if (trimmed) continue;
       const parsed = parseDialogue(line);
       if (parsed) {
         activeSpeaker = parsed.speaker;
-        if (parsed.body) queue.push(parsed);
+        if (parsed.body) {
+          const prefix = line.match(/^\s*[［\[][^\]］]+[\]］]\s*/)?.[0]
+              .length ?? 0,
+            start = lineStart + prefix;
+          queue.push({
+            speaker: parsed.speaker,
+            body: parsed.body,
+            start,
+            end: start + parsed.body.length,
+          });
+        }
       } else if (line.trim()) {
-        queue.push({ speaker: activeSpeaker, body: line.trim() });
+        const body = line.trim(),
+          leading = line.length - line.trimStart().length,
+          start = lineStart + leading;
+        queue.push({
+          speaker: activeSpeaker,
+          body,
+          start,
+          end: start + body.length,
+        });
       } else queue.push({ pauseFrames: 6 });
     }
     while (queue.length && "pauseFrames" in queue.at(-1)!) queue.pop();
     if (!queue.some((item) => "body" in item)) return;
+    playbackSelectionRef.current = { start: cursor, end: originalEnd };
     const run = ++playbackRunRef.current;
     speechSynthesis.cancel();
     setSpeaking(true);
@@ -557,6 +592,7 @@ export default function Home() {
       if (run !== playbackRunRef.current) return;
       if (index >= queue.length) {
         setSpeaking(false);
+        restoreSelection();
         return;
       }
       const item = queue[index];
@@ -567,6 +603,9 @@ export default function Home() {
         );
         return;
       }
+      const target = dialogueRef.current;
+      target?.focus({ preventScroll: true });
+      target?.setSelectionRange(item.start, item.end);
       const utterance = new SpeechSynthesisUtterance(item.body);
       utterance.lang = "ja-JP";
       utterance.pitch = speakerPitch[item.speaker] ?? 1;
@@ -575,7 +614,11 @@ export default function Home() {
         Math.min(2, playbackRate * (syncPlaybackRate ? cps / 8 : 1)),
       );
       utterance.onend = () => playNext(index + 1);
-      utterance.onerror = () => setSpeaking(false);
+      utterance.onerror = () => {
+        if (run !== playbackRunRef.current) return;
+        setSpeaking(false);
+        restoreSelection();
+      };
       speechSynthesis.speak(utterance);
     };
     playNext(0);
@@ -1555,6 +1598,7 @@ export default function Home() {
           </div>
           <textarea
             ref={dialogueRef}
+            className={speaking ? "speech-active" : undefined}
             wrap="off"
             spellCheck={false}
             value={dialogue}

@@ -599,6 +599,10 @@ body {
   color: #873b2b;
   background-color: #fffdfa;
 }
+.dialogue textarea.speech-active::selection {
+  background: #ffd34e;
+  color: #3f170f;
+}
 .cut-layer {
   position: relative;
   padding-top: 54px;
