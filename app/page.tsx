@@ -1620,42 +1620,53 @@ export default function Home() {
       throw new Error(
         "再生設定でVOICEVOXへ接続し、話者スタイルを設定してください。",
       );
-    const queue: ({ speaker: string; body: string } | { pauseFrames: number })[] = [],
-      lines = dialogue.split("\n");
-    let activeSpeaker = "";
-    for (let row = 0; row < lines.length; row++) {
-      if (
+    type SpeechItem = { speaker: string; body: string };
+    type AudioChunk = { audio: AudioBuffer } | { pauseSeconds: number };
+    const isTrimmed = (row: number) =>
         sortedCuts.some(
           (cut) => row >= cut.line && row < cut.line + (cut.trimRows ?? 0),
-        )
-      )
-        continue;
-      const parsed = parseDialogue(lines[row]);
-      if (parsed) {
-        activeSpeaker = parsed.speaker;
-        if (parsed.body)
-          queue.push({ speaker: parsed.speaker, body: parsed.body });
-      } else if (lines[row].trim()) {
-        queue.push({ speaker: activeSpeaker, body: lines[row].trim() });
-      } else queue.push({ pauseFrames: 6 });
+        ),
+      lines = dialogue.split("\n"),
+      sectionItems: { section: Section; items: (SpeechItem | { pauseFrames: number })[] }[] = [];
+    let activeSpeaker = "";
+    for (const section of sections) {
+      const rows = Array.from(
+          { length: Math.max(0, section.end - section.start) },
+          (_, offset) => section.start + offset,
+        ).filter((row) => !isTrimmed(row)),
+        items: (SpeechItem | { pauseFrames: number })[] = [];
+      rows.forEach((row, index) => {
+        const parsed = parseDialogue(lines[row] ?? "");
+        if (parsed) {
+          activeSpeaker = parsed.speaker;
+          if (parsed.body)
+            items.push({ speaker: parsed.speaker, body: parsed.body });
+        } else if (lines[row]?.trim()) {
+          items.push({ speaker: activeSpeaker, body: lines[row].trim() });
+        }
+        // readingFrames adds six frames for every newline, not only blank rows.
+        if (index < rows.length - 1) items.push({ pauseFrames: 6 });
+      });
+      sectionItems.push({ section, items });
     }
-    while (queue.length && "pauseFrames" in queue.at(-1)!) queue.pop();
-    const speechCount = queue.filter((item) => "body" in item).length;
+    const speechCount = sectionItems.reduce(
+      (sum, entry) => sum + entry.items.filter((item) => "body" in item).length,
+      0,
+    );
     if (!speechCount) throw new Error("書き出すセリフがありません。");
     const audioContext = new AudioContext(),
-      chunks: ({ audio: AudioBuffer } | { pauseSeconds: number })[] = [];
+      baseSpeed = Math.max(
+        0.5,
+        Math.min(2, playbackRate * (syncPlaybackRate ? cps / 8 : 1)),
+      ),
+      renderedSections: { frames: number; chunks: AudioChunk[] }[] = [];
     let completed = 0;
     try {
-      const base = voicevoxUrl.trim().replace(/\/+$/, "");
-      for (const item of queue) {
-        if ("pauseFrames" in item) {
-          chunks.push({ pauseSeconds: item.pauseFrames / FPS });
-          continue;
-        }
+      const base = voicevoxUrl.trim().replace(/\/+$/, ""),
+        synthesize = async (item: SpeechItem, speedScale: number) => {
         const styleId =
           voicevoxSpeakerStyles[item.speaker] ?? voicevoxStyles[0]?.id;
         if (styleId == null) throw new Error(`[${item.speaker}]の話者設定がありません。`);
-        setBusy(`VOICEVOX音声を生成中… ${completed + 1} / ${speechCount}`);
         const queryResponse = await fetch(
           `${base}/audio_query?text=${encodeURIComponent(item.body)}&speaker=${styleId}`,
           { method: "POST" },
@@ -1663,10 +1674,7 @@ export default function Home() {
         if (!queryResponse.ok)
           throw new Error(`音声クエリ HTTP ${queryResponse.status}`);
         const query = (await queryResponse.json()) as Record<string, unknown>;
-        query.speedScale = Math.max(
-          0.5,
-          Math.min(2, playbackRate * (syncPlaybackRate ? cps / 8 : 1)),
-        );
+        query.speedScale = Math.max(0.5, Math.min(2, speedScale));
         const audioResponse = await fetch(`${base}/synthesis?speaker=${styleId}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1674,28 +1682,76 @@ export default function Home() {
         });
         if (!audioResponse.ok)
           throw new Error(`音声合成 HTTP ${audioResponse.status}`);
-        chunks.push({
-          audio: await audioContext.decodeAudioData(await audioResponse.arrayBuffer()),
-        });
-        completed++;
+        return audioContext.decodeAudioData(await audioResponse.arrayBuffer());
+      };
+      for (let sectionIndex = 0; sectionIndex < sectionItems.length; sectionIndex++) {
+        const entry = sectionItems[sectionIndex],
+          renderAtSpeed = async (speed: number, retry: boolean) => {
+            const chunks: AudioChunk[] = [];
+            for (const item of entry.items) {
+              if ("pauseFrames" in item) {
+                chunks.push({ pauseSeconds: item.pauseFrames / FPS });
+              } else {
+                setBusy(
+                  `VOICEVOX音声を${retry ? "尺に合わせて再" : ""}生成中… ${Math.min(completed + 1, speechCount)} / ${speechCount}`,
+                );
+                chunks.push({ audio: await synthesize(item, speed) });
+                if (!retry) completed++;
+              }
+            }
+            return chunks;
+          };
+        let chunks = await renderAtSpeed(baseSpeed, false);
+        const pauseDuration = chunks.reduce(
+            (sum, chunk) => sum + ("pauseSeconds" in chunk ? chunk.pauseSeconds : 0),
+            0,
+          ),
+          speechDuration = chunks.reduce(
+            (sum, chunk) => sum + ("audio" in chunk ? chunk.audio.duration : 0),
+            0,
+          ),
+          targetDuration = entry.section.frames / FPS,
+          availableSpeechDuration = Math.max(0.01, targetDuration - pauseDuration);
+        if (speechDuration > availableSpeechDuration * 1.01) {
+          const adjustedSpeed = Math.min(
+            2,
+            baseSpeed * (speechDuration / availableSpeechDuration) * 1.01,
+          );
+          if (adjustedSpeed > baseSpeed + 0.01)
+            chunks = await renderAtSpeed(adjustedSpeed, true);
+        }
+        renderedSections.push({ frames: entry.section.frames, chunks });
       }
       const sampleRate =
-          chunks.find((chunk): chunk is { audio: AudioBuffer } => "audio" in chunk)
+          renderedSections
+            .flatMap((entry) => entry.chunks)
+            .find((chunk): chunk is { audio: AudioBuffer } => "audio" in chunk)
             ?.audio.sampleRate ?? 24000,
-        sampleCounts = chunks.map((chunk) =>
-          "pauseSeconds" in chunk
-            ? Math.round(chunk.pauseSeconds * sampleRate)
-            : Math.round(chunk.audio.duration * sampleRate),
-        ),
-        output = new Float32Array(sampleCounts.reduce((sum, value) => sum + value, 0));
+        output = new Float32Array(Math.round((total / FPS) * sampleRate));
       let position = 0;
-      chunks.forEach((chunk, chunkIndex) => {
-        const length = sampleCounts[chunkIndex];
-        if ("audio" in chunk) {
+      renderedSections.forEach((entry, sectionIndex) => {
+        const sectionLength =
+            sectionIndex === renderedSections.length - 1
+              ? output.length - position
+              : Math.round((entry.frames / FPS) * sampleRate),
+          sectionEnd = Math.min(output.length, position + sectionLength);
+        for (const chunk of entry.chunks) {
+          if (position >= sectionEnd) break;
+          if ("pauseSeconds" in chunk) {
+            position = Math.min(
+              sectionEnd,
+              position + Math.round(chunk.pauseSeconds * sampleRate),
+            );
+            continue;
+          }
           const channels = Array.from(
-            { length: chunk.audio.numberOfChannels },
-            (_, channel) => chunk.audio.getChannelData(channel),
-          );
+              { length: chunk.audio.numberOfChannels },
+              (_, channel) => chunk.audio.getChannelData(channel),
+            ),
+            length = Math.min(
+              sectionEnd - position,
+              Math.round(chunk.audio.duration * sampleRate),
+            );
           for (let i = 0; i < length; i++) {
             const sourceIndex = Math.min(
                 channels[0].length - 1,
@@ -1707,8 +1763,11 @@ export default function Home() {
               );
             output[position + i] = value / channels.length;
           }
+          position += length;
         }
-        position += length;
+        // Pad a short cut with silence, or finish after truncating a cut that
+        // is still too long even at VOICEVOX's maximum speed.
+        position = sectionEnd;
       });
       setBusy("WAVファイルを作成中…");
       download(`${name}.wav`, encodePcmWav(output, sampleRate), "audio/wav");
