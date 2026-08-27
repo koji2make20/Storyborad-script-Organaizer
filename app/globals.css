@@ -100,7 +100,7 @@
 }
 .workspace {
   grid-template-columns:
-    58px minmax(0, var(--left-col)) minmax(0, var(--right-col))
+    58px minmax(0, var(--left-col)) 8px minmax(0, var(--right-col))
     80px !important;
 }
 .workspace > .rail {
@@ -110,10 +110,13 @@
   grid-column: 2;
 }
 .workspace > .editor-panel.dialogue {
+  grid-column: 4;
+}
+.workspace > .column-divider {
   grid-column: 3;
 }
 .workspace > .cut-layer {
-  grid-column: 4;
+  grid-column: 5;
   grid-row: 1;
 }
 .cut-overlay {
@@ -380,17 +383,22 @@
 html,
 body {
   margin: 0;
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
   background: var(--paper);
   color: var(--ink);
   font-family: "Yu Gothic UI", "Noto Sans JP", sans-serif;
 }
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .topbar {
+  flex: 0 0 auto;
   height: 72px;
   display: flex;
   align-items: center;
@@ -449,6 +457,7 @@ body {
   border-color: var(--accent2);
 }
 .controlbar {
+  flex: 0 0 auto;
   min-height: 68px;
   display: flex;
   align-items: center;
@@ -499,8 +508,10 @@ body {
       var(--right-col)
     );
   flex: 1;
-  min-height: 620px;
+  min-height: 0;
   padding: 18px 28px 28px;
+  overflow: auto;
+  align-content: start;
 }
 .rail {
   padding-top: 42px;
@@ -595,21 +606,26 @@ body {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
-.column-resizer {
-  position: absolute;
-  z-index: 7;
-  top: 7px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 42px;
-  height: 27px;
-  border: 1px solid #c7c1b7;
-  border-radius: 6px;
-  background: #fff;
-  color: #873b2b;
-  font-weight: 800;
+.column-divider {
+  position: relative;
+  z-index: 9;
+  min-width: 8px;
+  background: #ebe8e1;
   cursor: ew-resize;
   touch-action: none;
+}
+.column-divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: #b9b3a9;
+}
+.column-divider:hover::after,
+.is-dragging .column-divider::after {
+  background: var(--accent);
 }
 .speech-button {
   border: 1px solid var(--line);
@@ -694,6 +710,7 @@ body {
   white-space: nowrap;
 }
 footer {
+  flex: 0 0 auto;
   height: 34px;
   padding: 8px 30px;
   background: var(--accent2);
@@ -728,7 +745,9 @@ footer {
   }
   .workspace {
     padding: 10px;
-    grid-template-columns: 42px minmax(250px, 1fr) 55px minmax(250px, 1fr);
+    grid-template-columns:
+      42px minmax(250px, var(--left-col)) 8px
+      minmax(250px, var(--right-col)) 55px !important;
     overflow-x: auto;
   }
 }

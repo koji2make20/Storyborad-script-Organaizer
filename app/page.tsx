@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import { jsPDF } from "jspdf";
 
@@ -104,6 +104,46 @@ const download = (
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+const saveToChosenLocation = async (
+  name: string,
+  body: BlobPart,
+  type = "text/plain;charset=utf-8",
+) => {
+  const picker = (
+    window as Window & {
+      showSaveFilePicker?: (options: {
+        suggestedName: string;
+        types: { description: string; accept: Record<string, string[]> }[];
+      }) => Promise<{
+        createWritable: () => Promise<{
+          write: (data: Blob) => Promise<void>;
+          close: () => Promise<void>;
+        }>;
+      }>;
+    }
+  ).showSaveFilePicker;
+  if (!picker) {
+    download(name, body, type);
+    return;
+  }
+  try {
+    const handle = await picker({
+        suggestedName: name,
+        types: [
+          {
+            description: "Storyboard Script Organizer 作業データ",
+            accept: { "application/json": [".json"] },
+          },
+        ],
+      }),
+      writable = await handle.createWritable();
+    await writable.write(new Blob([body], { type }));
+    await writable.close();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return;
+    download(name, body, type);
+  }
 };
 const boxLines = (
   ctx: CanvasRenderingContext2D,
@@ -244,9 +284,34 @@ export default function Home() {
       speaker: string;
       inherit: boolean;
     } | null>(null),
+    pendingSelectionRef = useRef<{
+      side: "action" | "dialogue";
+      position: number;
+      scrollTop: number;
+      scrollLeft: number;
+      workspaceScrollTop: number;
+      workspaceScrollLeft: number;
+    } | null>(null),
     playbackRunRef = useRef(0),
     dragAnchorLine = useRef(0),
     dragStartLines = useRef<Map<string, number>>(new Map());
+  useLayoutEffect(() => {
+    const pending = pendingSelectionRef.current;
+    if (!pending) return;
+    const target =
+      pending.side === "action" ? actionRef.current : dialogueRef.current;
+    if (!target) return;
+    const position = Math.min(target.value.length, pending.position);
+    target.focus({ preventScroll: true });
+    target.setSelectionRange(position, position);
+    target.scrollTop = pending.scrollTop;
+    target.scrollLeft = pending.scrollLeft;
+    if (workspaceRef.current) {
+      workspaceRef.current.scrollTop = pending.workspaceScrollTop;
+      workspaceRef.current.scrollLeft = pending.workspaceScrollLeft;
+    }
+    pendingSelectionRef.current = null;
+  }, [action, dialogue]);
   const lines = Math.max(
       action.split("\n").length,
       dialogue.split("\n").length,
@@ -359,14 +424,17 @@ export default function Home() {
       setDialogue(next);
       setAction(other.join("\n"));
     }
-    if (caret != null)
-      requestAnimationFrame(() => {
-        const target =
-            side === "action" ? actionRef.current : dialogueRef.current,
-          position = Math.min(target?.value.length ?? 0, caret + caretShift);
-        target?.focus();
-        target?.setSelectionRange(position, position);
-      });
+    if (caret != null) {
+      const target = side === "action" ? actionRef.current : dialogueRef.current;
+      pendingSelectionRef.current = {
+        side,
+        position: caret + caretShift,
+        scrollTop: target?.scrollTop ?? 0,
+        scrollLeft: target?.scrollLeft ?? 0,
+        workspaceScrollTop: workspaceRef.current?.scrollTop ?? 0,
+        workspaceScrollLeft: workspaceRef.current?.scrollLeft ?? 0,
+      };
+    }
   };
   const normalize = () =>
     setCuts((v) =>
@@ -438,9 +506,14 @@ export default function Home() {
   };
   const resizeColumns = (e: React.PointerEvent) => {
     if (!splitDragging || !workspaceRef.current) return;
-    const rect = workspaceRef.current.getBoundingClientRect(),
-      usable = Math.max(1, rect.width - 56 - 58 - 80),
-      left = e.clientX - rect.left - 28 - 58;
+    const panels = workspaceRef.current.querySelectorAll<HTMLElement>(
+        ".editor-panel",
+      ),
+      actionRect = panels[0]?.getBoundingClientRect(),
+      dialogueRect = panels[1]?.getBoundingClientRect();
+    if (!actionRect || !dialogueRect) return;
+    const usable = Math.max(1, dialogueRect.right - actionRect.left - 8),
+      left = e.clientX - actionRect.left;
     setSplit(Math.max(25, Math.min(75, (left / usable) * 100)));
   };
   const toggleSpeech = () => {
@@ -1252,7 +1325,11 @@ export default function Home() {
     const name = safe(exportName);
     setExportKind(null);
     if (exportKind === "project")
-      download(`${name}.ssp.json`, project(), "application/json");
+      await saveToChosenLocation(
+        `${name}.ssp.json`,
+        project(),
+        "application/json",
+      );
     else if (exportKind === "pdf") await exportPdf();
     else if (exportKind === "xdts") await exportXdtsNamed();
     else if (exportKind === "storyboard") await exportStoryboard();
@@ -1385,7 +1462,7 @@ export default function Home() {
       </section>
       <section
         ref={workspaceRef}
-        className={`workspace ${dragId || resizeId ? "is-dragging" : ""}`}
+        className={`workspace ${dragId || resizeId || splitDragging ? "is-dragging" : ""}`}
         style={
           {
             "--editor-font": `${fontSize}px`,
@@ -1444,18 +1521,18 @@ export default function Home() {
             }
           />
         </div>
+        <div
+          className="column-divider"
+          role="separator"
+          aria-label="ト書きとセリフの幅を調整"
+          aria-orientation="vertical"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setSplitDragging(true);
+          }}
+        />
         <div ref={cutLayerRef} className="cut-layer">
-          <button
-            className="column-resizer"
-            title="左右の幅をドラッグして調整"
-            onPointerDown={(e) => {
-              e.preventDefault();
-              e.currentTarget.setPointerCapture(e.pointerId);
-              setSplitDragging(true);
-            }}
-          >
-            ↔
-          </button>
           {Array.from({ length: lines }, (_, i) => (
             <div key={i} className="cut-row">
               {!sortedCuts.some((c) => c.line === i) && (
