@@ -284,6 +284,7 @@ export default function Home() {
     [splitDragging, setSplitDragging] = useState(false),
     [speaking, setSpeaking] = useState(false),
     [playbackOpen, setPlaybackOpen] = useState(false),
+    [voicevoxHelpOpen, setVoicevoxHelpOpen] = useState(false),
     [playbackRate, setPlaybackRate] = useState(1),
     [syncPlaybackRate, setSyncPlaybackRate] = useState(true),
     [speakerPitch, setSpeakerPitch] = useState<Record<string, number>>({}),
@@ -2206,6 +2207,13 @@ export default function Home() {
                   />
                   VOICEVOX
                 </label>
+                <button
+                  type="button"
+                  className="voicevox-help-link"
+                  onClick={() => setVoicevoxHelpOpen(true)}
+                >
+                  設定
+                </button>
               </div>
               <label className="voicevox-address">
                 <span>VOICEVOX Engine</span>
@@ -2303,6 +2311,51 @@ export default function Home() {
                 onClick={() => setPlaybackOpen(false)}
               >
                 設定を閉じる
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {voicevoxHelpOpen && (
+        <div
+          className="modal-backdrop voicevox-help-backdrop"
+          onPointerDown={() => setVoicevoxHelpOpen(false)}
+        >
+          <section
+            className="export-dialog voicevox-help-dialog"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <h2>VOICEVOX接続設定</h2>
+            <ol>
+              <li>
+                <a
+                  href="http://127.0.0.1:50021/setting"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  VOICEVOX Engine設定
+                </a>
+                を開きます。
+              </li>
+              <li>
+                <b>CORS Policy Mode</b> は <code>localapps</code> のままにします。
+              </li>
+              <li>
+                <b>Allow Origin</b> に
+                <code>https://koji2make20.github.io</code>
+                を入力します。
+              </li>
+            </ol>
+            <p className="setting-help">
+              設定後はVOICEVOXを完全に終了して再起動し、この画面の「接続確認」を押してください。URL末尾の
+              /Storyborad-script-Organaizer/ は入力しません。
+            </p>
+            <div className="dialog-actions">
+              <button
+                className="confirm"
+                onClick={() => setVoicevoxHelpOpen(false)}
+              >
+                閉じる
               </button>
             </div>
           </section>

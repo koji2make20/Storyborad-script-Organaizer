@@ -663,6 +663,7 @@ body {
 }
 .engine-options {
   display: flex;
+  align-items: center;
   gap: 18px;
 }
 .engine-options label {
@@ -670,6 +671,34 @@ body {
   align-items: center;
   gap: 6px;
   font-size: 13px;
+}
+.voicevox-help-link {
+  margin-left: -10px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: #1f6380;
+  font-size: 12px;
+  cursor: pointer;
+}
+.voicevox-help-backdrop {
+  z-index: 140;
+}
+.voicevox-help-dialog ol {
+  display: grid;
+  gap: 14px;
+  padding-left: 25px;
+  line-height: 1.7;
+}
+.voicevox-help-dialog code {
+  display: inline-block;
+  margin: 2px 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #f0ede7;
+  color: #873b2b;
+  overflow-wrap: anywhere;
 }
 .voicevox-address {
   display: grid;
