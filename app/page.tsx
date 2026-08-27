@@ -261,6 +261,7 @@ export default function Home() {
     [fontSize, setFontSize] = useState(15),
     [menu, setMenu] = useState(false),
     [busy, setBusy] = useState(""),
+    [fileDragActive, setFileDragActive] = useState(false),
     [dragId, setDragId] = useState<string | null>(null),
     [resizeId, setResizeId] = useState<string | null>(null),
     [exportKind, setExportKind] = useState<ExportKind>(null),
@@ -1011,6 +1012,20 @@ export default function Home() {
       setBusy("");
     }
   };
+  const hasDraggedFiles = (e: React.DragEvent) =>
+    Array.from(e.dataTransfer.types).includes("Files");
+  const handleFileDragOver = (e: React.DragEvent) => {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setFileDragActive(true);
+  };
+  const handleFileDrop = (e: React.DragEvent) => {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    setFileDragActive(false);
+    void importFile(e.dataTransfer.files[0]);
+  };
   const project = () =>
     JSON.stringify(
       {
@@ -1515,7 +1530,30 @@ export default function Home() {
         setSplitDragging(false);
       }}
       onKeyDownCapture={handleHistoryKeyDown}
+      onDragEnter={(e) => {
+        if (hasDraggedFiles(e)) {
+          e.preventDefault();
+          setFileDragActive(true);
+        }
+      }}
+      onDragOver={handleFileDragOver}
+      onDragLeave={(e) => {
+        if (
+          hasDraggedFiles(e) &&
+          !e.currentTarget.contains(e.relatedTarget as Node | null)
+        )
+          setFileDragActive(false);
+      }}
+      onDrop={handleFileDrop}
     >
+      {fileDragActive && (
+        <div className="file-drop-overlay" aria-hidden="true">
+          <div>
+            <strong>ファイルをここにドロップ</strong>
+            <span>TXT・Word・PDF・SSP JSON</span>
+          </div>
+        </div>
+      )}
       <header className="topbar">
         <div className="brand">
           <span className="mark">SC</span>
@@ -1525,7 +1563,12 @@ export default function Home() {
           </div>
         </div>
         <nav>
-          <button onClick={() => fileRef.current?.click()}>読み込む</button>
+          <button
+            title="TXT・Word・PDF・SSP JSONを読み込む（ドラッグ＆ドロップ対応）"
+            onClick={() => fileRef.current?.click()}
+          >
+            読み込む
+          </button>
           <button onClick={() => setImportSettingsOpen(true)}>
             読み込み設定
           </button>
@@ -1561,7 +1604,10 @@ export default function Home() {
           hidden
           type="file"
           accept=".txt,.md,.json,.ssp.json,.docx,.pdf"
-          onChange={(e) => importFile(e.target.files?.[0])}
+          onChange={(e) => {
+            void importFile(e.target.files?.[0]);
+            e.currentTarget.value = "";
+          }}
         />
       </header>
       <section className="controlbar">
