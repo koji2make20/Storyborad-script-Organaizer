@@ -271,7 +271,6 @@ export default function Home() {
     [exportKind, setExportKind] = useState<ExportKind>(null),
     [exportName, setExportName] = useState("storyboard"),
     [movieDialogueBold, setMovieDialogueBold] = useState(false),
-    [movieDialogueColor, setMovieDialogueColor] = useState("#ffffff"),
     [includeAction, setIncludeAction] = useState(false),
     [gridCount, setGridCount] = useState(6),
     [split, setSplit] = useState(50),
@@ -998,6 +997,30 @@ export default function Home() {
         setBreakPeriod(Boolean(p.break_at_period ?? oldPunctuation));
         setBreakMarks(Boolean(p.break_at_exclamation_question));
         setBreakEllipsis(Boolean(p.break_at_ellipsis));
+        setSpeakerColors(
+          p.speaker_colors && typeof p.speaker_colors === "object"
+            ? p.speaker_colors
+            : {},
+        );
+        setSpeakerPitch(
+          p.speaker_pitch && typeof p.speaker_pitch === "object"
+            ? p.speaker_pitch
+            : {},
+        );
+        setVoicevoxSpeakerStyles(
+          p.voicevox_speaker_styles &&
+            typeof p.voicevox_speaker_styles === "object"
+            ? p.voicevox_speaker_styles
+            : {},
+        );
+        if (typeof p.voicevox_url === "string" && p.voicevox_url.trim())
+          setVoicevoxUrl(p.voicevox_url);
+        if (p.playback_engine === "browser" || p.playback_engine === "voicevox")
+          setPlaybackEngine(p.playback_engine);
+        if (Number.isFinite(Number(p.playback_rate)))
+          setPlaybackRate(Math.max(0.5, Math.min(2, Number(p.playback_rate))));
+        if (typeof p.sync_playback_rate === "boolean")
+          setSyncPlaybackRate(p.sync_playback_rate);
         const dialogueText = String(p.dialogue ?? ""),
           rowAt = (position: unknown) =>
             dialogueText
@@ -1170,6 +1193,13 @@ export default function Home() {
         dialogue,
         cuts: sortedCuts,
         cut_names: sections.map((s) => s.name),
+        speaker_colors: speakerColors,
+        speaker_pitch: speakerPitch,
+        voicevox_speaker_styles: voicevoxSpeakerStyles,
+        voicevox_url: voicevoxUrl,
+        playback_engine: playbackEngine,
+        playback_rate: playbackRate,
+        sync_playback_rate: syncPlaybackRate,
       },
       null,
       2,
@@ -1205,24 +1235,41 @@ export default function Home() {
             `"${m!.speaker.replaceAll('"', '""')}","${m!.body.replaceAll('"', '""')}"`,
         ),
     ].join("\r\n");
-  const boardPng = async (speaker: string, color: string) => {
-    const c = document.createElement("canvas"),
-      ctx = c.getContext("2d")!;
+  const speakerBoardWidth = (ctx: CanvasRenderingContext2D, speaker: string) => {
     ctx.font = 'bold 52px "Yu Gothic UI",sans-serif';
-    const w = Math.ceil(ctx.measureText(speaker).width) + 64;
-    c.width = w;
-    c.height = 96;
+    return Math.ceil(ctx.measureText(speaker).width) + 64;
+  };
+  const drawSpeakerBoard = (
+    ctx: CanvasRenderingContext2D,
+    speaker: string,
+    color: string,
+    x: number,
+    y: number,
+  ) => {
+    const width = speakerBoardWidth(ctx, speaker);
+    ctx.save();
     ctx.fillStyle = color;
-    ctx.roundRect(2, 2, w - 4, 92, 12);
+    ctx.beginPath();
+    ctx.roundRect(x + 2, y + 2, width - 4, 92, 12);
     ctx.fill();
     ctx.font = 'bold 52px "Yu Gothic UI",sans-serif';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.lineWidth = 5;
     ctx.strokeStyle = "#000";
-    ctx.strokeText(speaker, w / 2, 48);
+    ctx.strokeText(speaker, x + width / 2, y + 48);
     ctx.fillStyle = "#fff";
-    ctx.fillText(speaker, w / 2, 48);
+    ctx.fillText(speaker, x + width / 2, y + 48);
+    ctx.restore();
+    return width;
+  };
+  const boardPng = async (speaker: string, color: string) => {
+    const c = document.createElement("canvas"),
+      ctx = c.getContext("2d")!;
+    const w = speakerBoardWidth(ctx, speaker);
+    c.width = w;
+    c.height = 96;
+    drawSpeakerBoard(ctx, speaker, color, 0, 0);
     return await new Promise<Blob>((resolve, reject) =>
       c.toBlob(
         (b) => (b ? resolve(b) : reject(new Error("PNG作成失敗"))),
@@ -1638,7 +1685,7 @@ export default function Home() {
       );
     type SpeechItem = { speaker: string; body: string };
     type AudioChunk =
-      | { audio: AudioBuffer; body: string }
+      | { audio: AudioBuffer; body: string; speaker: string }
       | { pauseSeconds: number };
     const isTrimmed = (row: number) =>
         sortedCuts.some(
@@ -1713,7 +1760,11 @@ export default function Home() {
                 setBusy(
                   `VOICEVOX音声を${retry ? "尺に合わせて再" : ""}生成中… ${Math.min(completed + 1, speechCount)} / ${speechCount}`,
                 );
-                chunks.push({ audio: await synthesize(item, speed), body: item.body });
+                chunks.push({
+                  audio: await synthesize(item, speed),
+                  body: item.body,
+                  speaker: item.speaker,
+                });
                 if (!retry) completed++;
               }
             }
@@ -1744,7 +1795,7 @@ export default function Home() {
           renderedSections
             .flatMap((entry) => entry.chunks)
             .find(
-              (chunk): chunk is { audio: AudioBuffer; body: string } =>
+              (chunk): chunk is { audio: AudioBuffer; body: string; speaker: string } =>
                 "audio" in chunk,
             )
             ?.audio.sampleRate ?? 24000,
@@ -1760,11 +1811,21 @@ export default function Home() {
           0,
           totalSamples - previousSamples,
         );
-      const subtitleSections: { startFrame: number; endFrame: number; body: string }[][] = [],
+      const subtitleSections: {
+          startFrame: number;
+          endFrame: number;
+          body: string;
+          speaker: string;
+        }[][] = [],
         pcmSections = renderedSections.map(
         (entry, sectionIndex) => {
           const output = new Float32Array(sectionLengths[sectionIndex]);
-          const cues: { startFrame: number; endFrame: number; body: string }[] = [];
+          const cues: {
+            startFrame: number;
+            endFrame: number;
+            body: string;
+            speaker: string;
+          }[] = [];
           let position = 0;
           const sectionEnd = output.length;
         for (const chunk of entry.chunks) {
@@ -1789,7 +1850,12 @@ export default function Home() {
               startFrame + 1,
               Math.ceil(((position + length) / sampleRate) * FPS),
             );
-          cues.push({ startFrame, endFrame, body: chunk.body });
+          cues.push({
+            startFrame,
+            endFrame,
+            body: chunk.body,
+            speaker: chunk.speaker,
+          });
           for (let i = 0; i < length; i++) {
             const sourceIndex = Math.min(
                 channels[0].length - 1,
@@ -1841,7 +1907,7 @@ export default function Home() {
     ctx: CanvasRenderingContext2D,
     cutNumber: string,
     frameNumber: number,
-    boldText = "",
+    boldSpeaker = "",
   ) => {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, 1920, 1080);
@@ -1854,36 +1920,10 @@ export default function Home() {
     ctx.fillStyle = "#fff";
     ctx.font = '600 54px "Consolas", "Courier New", monospace';
     ctx.fillText(movieTimecode(frameNumber), 1880, 1020);
-    if (!boldText) return;
-    ctx.save();
-    ctx.font = '700 58px "Yu Gothic UI", sans-serif';
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = 10;
-    ctx.strokeStyle = "rgba(0,0,0,.88)";
-    ctx.fillStyle = movieDialogueColor;
-    const maxWidth = 1240,
-      chars = Array.from(boldText),
-      lines: string[] = [];
-    let line = "";
-    for (const char of chars) {
-      const candidate = line + char;
-      if (line && ctx.measureText(candidate).width > maxWidth) {
-        lines.push(line);
-        line = char;
-      } else line = candidate;
-    }
-    if (line) lines.push(line);
-    const visibleLines = lines.slice(0, 3),
-      lineHeight = 72,
-      centerY = 700 - ((visibleLines.length - 1) * lineHeight) / 2;
-    visibleLines.forEach((text, index) => {
-      const y = centerY + index * lineHeight;
-      ctx.strokeText(text, 820, y, maxWidth);
-      ctx.fillText(text, 820, y, maxWidth);
-    });
-    ctx.restore();
+    if (!boldSpeaker) return;
+    const speakerIndex = Math.max(0, speakers.indexOf(boldSpeaker)),
+      color = speakerColors[boldSpeaker] ?? colors[speakerIndex % colors.length];
+    drawSpeakerBoard(ctx, boldSpeaker, color, 520, 800);
   };
   const exportMovieZipWithFfmpeg = async (name: string) => {
     const { FFmpeg } = await import("@ffmpeg/ffmpeg"),
@@ -1944,7 +1984,7 @@ export default function Home() {
                 )
               : undefined,
             frameName = `${framePrefix}${String(frameIndex).padStart(6, "0")}.png`;
-          drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.body);
+          drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.speaker);
           const png = await new Promise<Blob>((resolve, reject) =>
             canvas.toBlob(
               (blob) => (blob ? resolve(blob) : reject(new Error("画像生成に失敗しました。"))),
@@ -2102,7 +2142,7 @@ export default function Home() {
               (item) => frameIndex >= item.startFrame && frameIndex < item.endFrame,
             )
           : undefined;
-        drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.body);
+        drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.speaker);
         const frame = new VideoFrame(canvas, {
           timestamp: Math.round((frameIndex / FPS) * 1_000_000),
           duration: Math.round(1_000_000 / FPS),
@@ -2628,14 +2668,26 @@ export default function Home() {
                   セリフボールドを追加する
                 </label>
                 {movieDialogueBold && (
-                  <label>
-                    セリフボールドの色
-                    <input
-                      type="color"
-                      value={movieDialogueColor}
-                      onChange={(e) => setMovieDialogueColor(e.target.value)}
-                    />
-                  </label>
+                  <div className="color-settings">
+                    <b>話者別セリフボールドの色</b>
+                    {speakers.map((speaker, index) => (
+                      <label key={speaker}>
+                        <span>[{speaker}]</span>
+                        <input
+                          type="color"
+                          value={
+                            speakerColors[speaker] ?? colors[index % colors.length]
+                          }
+                          onChange={(e) =>
+                            setSpeakerColors((current) => ({
+                              ...current,
+                              [speaker]: e.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
                 )}
                 {movieDialogueBold && (
                   <p className="setting-help">
@@ -2860,7 +2912,16 @@ export default function Home() {
                   <b>話者別VOICEVOXスタイル</b>
                   {speakers.map((speaker) => (
                     <label key={speaker}>
-                      <span>[{speaker}]</span>
+                      <span
+                        className="speaker-color-name"
+                        style={{
+                          backgroundColor:
+                            speakerColors[speaker] ??
+                            colors[speakers.indexOf(speaker) % colors.length],
+                        }}
+                      >
+                        [{speaker}]
+                      </span>
                       <select
                         value={
                           voicevoxSpeakerStyles[speaker] ?? voicevoxStyles[0].id
@@ -2903,11 +2964,50 @@ export default function Home() {
               />
               <b>{playbackRate.toFixed(2)}倍</b>
             </label>
+            {speakers.length > 0 && (
+              <div className="color-settings playback-color-settings">
+                <b>話者別セリフボールド色</b>
+                {speakers.map((speaker, index) => (
+                  <label key={speaker}>
+                    <span
+                      className="speaker-color-name"
+                      style={{
+                        backgroundColor:
+                          speakerColors[speaker] ?? colors[index % colors.length],
+                      }}
+                    >
+                      [{speaker}]
+                    </span>
+                    <input
+                      type="color"
+                      value={
+                        speakerColors[speaker] ?? colors[index % colors.length]
+                      }
+                      onChange={(e) =>
+                        setSpeakerColors((current) => ({
+                          ...current,
+                          [speaker]: e.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
             {playbackEngine === "browser" && <div className="pitch-settings">
               <b>話者別の音声ピッチ</b>
               {speakers.map((speaker) => (
                 <label key={speaker}>
-                  <span>[{speaker}]</span>
+                  <span
+                    className="speaker-color-name"
+                    style={{
+                      backgroundColor:
+                        speakerColors[speaker] ??
+                        colors[speakers.indexOf(speaker) % colors.length],
+                    }}
+                  >
+                    [{speaker}]
+                  </span>
                   <input
                     type="range"
                     min="0.5"
