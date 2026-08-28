@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import { jsPDF } from "jspdf";
+import { ArrayBufferTarget, Muxer } from "mp4-muxer";
 
 type Cut = {
   id: string;
@@ -32,6 +33,7 @@ type ExportKind =
   | "srt"
   | "voicevox"
   | "wav"
+  | "movie"
   | null;
 const FPS = 24;
 const colors = [
@@ -1627,7 +1629,7 @@ export default function Home() {
     }
     return buffer;
   };
-  const exportVoicevoxWav = async (name: string) => {
+  const renderVoicevoxPcmSections = async () => {
     if (!voicevoxStyles.length)
       throw new Error(
         "再生設定でVOICEVOXへ接続し、話者スタイルを設定してください。",
@@ -1739,14 +1741,23 @@ export default function Home() {
             .flatMap((entry) => entry.chunks)
             .find((chunk): chunk is { audio: AudioBuffer } => "audio" in chunk)
             ?.audio.sampleRate ?? 24000,
-        output = new Float32Array(Math.round((total / FPS) * sampleRate));
-      let position = 0;
-      renderedSections.forEach((entry, sectionIndex) => {
-        const sectionLength =
-            sectionIndex === renderedSections.length - 1
-              ? output.length - position
-              : Math.round((entry.frames / FPS) * sampleRate),
-          sectionEnd = Math.min(output.length, position + sectionLength);
+        totalSamples = Math.round((total / FPS) * sampleRate),
+        sectionLengths = renderedSections.map((entry) =>
+          Math.round((entry.frames / FPS) * sampleRate),
+        ),
+        previousSamples = sectionLengths
+          .slice(0, -1)
+          .reduce((sum, value) => sum + value, 0);
+      if (sectionLengths.length)
+        sectionLengths[sectionLengths.length - 1] = Math.max(
+          0,
+          totalSamples - previousSamples,
+        );
+      const pcmSections = renderedSections.map(
+        (entry, sectionIndex) => {
+          const output = new Float32Array(sectionLengths[sectionIndex]);
+          let position = 0;
+          const sectionEnd = output.length;
         for (const chunk of entry.chunks) {
           if (position >= sectionEnd) break;
           if ("pauseSeconds" in chunk) {
@@ -1773,20 +1784,291 @@ export default function Home() {
                 (sum, channel) => sum + channel[sourceIndex],
                 0,
               );
-            output[position + i] = value / channels.length;
+              output[position + i] = value / channels.length;
           }
           position += length;
         }
         // Pad a short cut with silence, or finish after truncating a cut that
         // is still too long even at VOICEVOX's maximum speed.
         position = sectionEnd;
-      });
+          return output;
+        },
+      );
       setBusy("WAVファイルを作成中…");
-      download(`${name}.wav`, encodePcmWav(output, sampleRate), "audio/wav");
+      return { sampleRate, pcmSections };
     } finally {
       await audioContext.close();
       setBusy("");
     }
+  };
+  const exportVoicevoxWav = async (name: string) => {
+    const { sampleRate, pcmSections } = await renderVoicevoxPcmSections(),
+      output = new Float32Array(
+        pcmSections.reduce((sum, samples) => sum + samples.length, 0),
+      );
+    let position = 0;
+    for (const samples of pcmSections) {
+      output.set(samples, position);
+      position += samples.length;
+    }
+    download(`${name}.wav`, encodePcmWav(output, sampleRate), "audio/wav");
+  };
+  const exportMovieZipWithFfmpeg = async (name: string) => {
+    const { FFmpeg } = await import("@ffmpeg/ffmpeg"),
+      ffmpeg = new FFmpeg(),
+      basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "",
+      { sampleRate, pcmSections } = await renderVoicevoxPcmSections(),
+      zip = new JSZip(),
+      canvas = document.createElement("canvas");
+    canvas.width = 1920;
+    canvas.height = 1080;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) throw new Error("映像用Canvasを作成できませんでした。");
+    let activeCut = 0;
+    ffmpeg.on("progress", ({ progress }) => {
+      setBusy(
+        `MP4を生成中… ${activeCut + 1} / ${sections.length}（${Math.max(0, Math.min(100, Math.round(progress * 100)))}%）`,
+      );
+    });
+    setBusy("MP4エンジンを読み込んでいます…");
+    try {
+      await ffmpeg.load({
+        coreURL: `${basePath}/ffmpeg/ffmpeg-core.js`,
+        wasmURL: `${basePath}/ffmpeg/ffmpeg-core.wasm`,
+      });
+      for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+        activeCut = sectionIndex;
+        const section = sections[sectionIndex],
+          cutNumber = xdtsCut(section.name),
+          timecode = [
+            Math.floor(section.frames / (FPS * 60)),
+            Math.floor(section.frames / FPS) % 60,
+            section.frames % FPS,
+          ]
+            .map((value) => String(value).padStart(2, "0"))
+            .join(":"),
+          pngName = `cut_${sectionIndex}.png`,
+          wavName = `cut_${sectionIndex}.wav`,
+          mp4Name = `cut_${sectionIndex}.mp4`;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, 1920, 1080);
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#ef3f35";
+        ctx.font = '700 64px "Yu Gothic UI", sans-serif';
+        ctx.fillText(cutNumber, 160, 80, 240);
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#fff";
+        ctx.font = '600 54px "Consolas", "Courier New", monospace';
+        ctx.fillText(timecode, 1880, 1020);
+        const png = await new Promise<Blob>((resolve, reject) =>
+          canvas.toBlob(
+            (blob) => (blob ? resolve(blob) : reject(new Error("画像生成に失敗しました。"))),
+            "image/png",
+          ),
+        );
+        await ffmpeg.writeFile(pngName, new Uint8Array(await png.arrayBuffer()));
+        await ffmpeg.writeFile(
+          wavName,
+          new Uint8Array(
+            encodePcmWav(pcmSections[sectionIndex] ?? new Float32Array(), sampleRate),
+          ),
+        );
+        const duration = (section.frames / FPS).toFixed(6),
+          exitCode = await ffmpeg.exec([
+            "-loop",
+            "1",
+            "-framerate",
+            String(FPS),
+            "-i",
+            pngName,
+            "-i",
+            wavName,
+            "-t",
+            duration,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "stillimage",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            String(FPS),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-shortest",
+            mp4Name,
+          ]);
+        if (exitCode !== 0)
+          throw new Error(`CUT ${cutNumber} のMP4生成に失敗しました。`);
+        const movie = await ffmpeg.readFile(mp4Name);
+        if (typeof movie === "string") throw new Error("MP4データを取得できませんでした。");
+        zip.file(`${cutNumber}.mp4`, movie);
+        await Promise.all([
+          ffmpeg.deleteFile(pngName),
+          ffmpeg.deleteFile(wavName),
+          ffmpeg.deleteFile(mp4Name),
+        ]);
+      }
+      setBusy("MP4をZIPにまとめています…");
+      const body = await zip.generateAsync({ type: "blob" });
+      download(`${name}_mp4.zip`, body, "application/zip");
+    } finally {
+      ffmpeg.terminate();
+      setBusy("");
+    }
+  };
+  const exportMovieZip = async (name: string) => {
+    if (
+      typeof VideoEncoder === "undefined" ||
+      typeof AudioEncoder === "undefined" ||
+      typeof VideoFrame === "undefined" ||
+      typeof AudioData === "undefined"
+    )
+      return exportMovieZipWithFfmpeg(name);
+    const videoCandidates = ["avc1.640028", "avc1.4d4028", "avc1.420028"],
+      videoConfig = (
+        await Promise.all(
+          videoCandidates.map((codec) =>
+            VideoEncoder.isConfigSupported({
+              codec,
+              width: 1920,
+              height: 1080,
+              bitrate: 6_000_000,
+              framerate: FPS,
+              avc: { format: "avc" },
+            }),
+          ),
+        )
+      ).find((result) => result.supported)?.config;
+    if (!videoConfig)
+      throw new Error("この端末ではH.264エンコーダーを利用できません。");
+    const audioSampleRate = 48000,
+      audioConfig: AudioEncoderConfig = {
+        codec: "mp4a.40.2",
+        sampleRate: audioSampleRate,
+        numberOfChannels: 1,
+        bitrate: 128000,
+      },
+      audioSupport = await AudioEncoder.isConfigSupported(audioConfig);
+    if (!audioSupport.supported)
+      throw new Error("この端末ではAACエンコーダーを利用できません。");
+    const { sampleRate, pcmSections } = await renderVoicevoxPcmSections(),
+      zip = new JSZip(),
+      canvas = document.createElement("canvas");
+    canvas.width = 1920;
+    canvas.height = 1080;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) throw new Error("映像用Canvasを作成できませんでした。");
+    const resample = (source: Float32Array) => {
+        if (sampleRate === audioSampleRate) return source;
+        const result = new Float32Array(
+          Math.round((source.length / sampleRate) * audioSampleRate),
+        );
+        for (let i = 0; i < result.length; i++) {
+          const sourcePosition = (i * sampleRate) / audioSampleRate,
+            before = Math.min(source.length - 1, Math.floor(sourcePosition)),
+            after = Math.min(source.length - 1, before + 1),
+            ratio = sourcePosition - before;
+          result[i] = source[before] * (1 - ratio) + source[after] * ratio;
+        }
+        return result;
+      },
+      timecode = (frames: number) => {
+        const minutes = Math.floor(frames / (FPS * 60)),
+          seconds = Math.floor(frames / FPS) % 60,
+          rest = frames % FPS;
+        return [minutes, seconds, rest]
+          .map((value) => String(value).padStart(2, "0"))
+          .join(":");
+      };
+    for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+      const section = sections[sectionIndex],
+        cutNumber = xdtsCut(section.name),
+        target = new ArrayBufferTarget(),
+        muxer = new Muxer({
+          target,
+          video: {
+            codec: "avc",
+            width: 1920,
+            height: 1080,
+            frameRate: FPS,
+          },
+          audio: {
+            codec: "aac",
+            numberOfChannels: 1,
+            sampleRate: audioSampleRate,
+          },
+          fastStart: "in-memory",
+        }),
+        videoEncoder = new VideoEncoder({
+          output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+          error: (error) => console.error(error),
+        }),
+        audioEncoder = new AudioEncoder({
+          output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+          error: (error) => console.error(error),
+        });
+      videoEncoder.configure(videoConfig);
+      audioEncoder.configure(audioSupport.config ?? audioConfig);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, 1920, 1080);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#ef3f35";
+      ctx.font = '700 64px "Yu Gothic UI", sans-serif';
+      ctx.fillText(cutNumber, 40 + 120, 40 + 40, 240);
+      ctx.textAlign = "right";
+      ctx.fillStyle = "#fff";
+      ctx.font = '600 54px "Consolas", "Courier New", monospace';
+      ctx.fillText(timecode(section.frames), 1880, 1020);
+      for (let frameIndex = 0; frameIndex < section.frames; frameIndex++) {
+        setBusy(
+          `MP4映像を生成中… CUT ${cutNumber}（${sectionIndex + 1} / ${sections.length}）`,
+        );
+        const frame = new VideoFrame(canvas, {
+          timestamp: Math.round((frameIndex / FPS) * 1_000_000),
+          duration: Math.round(1_000_000 / FPS),
+        });
+        videoEncoder.encode(frame, {
+          keyFrame: frameIndex === 0 || frameIndex % (FPS * 2) === 0,
+        });
+        frame.close();
+        if (videoEncoder.encodeQueueSize > 12) await videoEncoder.flush();
+      }
+      const audio = resample(pcmSections[sectionIndex] ?? new Float32Array()),
+        audioBlock = 1024;
+      for (let offset = 0; offset < audio.length; offset += audioBlock) {
+        const length = Math.min(audioBlock, audio.length - offset),
+          data = audio.slice(offset, offset + length),
+          audioData = new AudioData({
+            format: "f32-planar",
+            sampleRate: audioSampleRate,
+            numberOfFrames: length,
+            numberOfChannels: 1,
+            timestamp: Math.round((offset / audioSampleRate) * 1_000_000),
+            data,
+          });
+        audioEncoder.encode(audioData);
+        audioData.close();
+        if (audioEncoder.encodeQueueSize > 24) await audioEncoder.flush();
+      }
+      await Promise.all([videoEncoder.flush(), audioEncoder.flush()]);
+      videoEncoder.close();
+      audioEncoder.close();
+      muxer.finalize();
+      zip.file(`${cutNumber}.mp4`, target.buffer);
+    }
+    setBusy("MP4をZIPにまとめています…");
+    const body = await zip.generateAsync({ type: "blob" });
+    download(`${name}_mp4.zip`, body, "application/zip");
+    setBusy("");
   };
   const openExport = (kind: ExportKind) => {
     setMenu(false);
@@ -1832,6 +2114,15 @@ export default function Home() {
         setBusy("");
         window.alert(
           error instanceof Error ? error.message : "WAV書き出しに失敗しました。",
+        );
+      }
+    } else if (exportKind === "movie") {
+      try {
+        await exportMovieZip(name);
+      } catch (error) {
+        setBusy("");
+        window.alert(
+          error instanceof Error ? error.message : "MP4書き出しに失敗しました。",
         );
       }
     }
@@ -1924,6 +2215,9 @@ export default function Home() {
               </button>
               <button onClick={() => openExport("wav")}>
                 VOICEVOX音声（WAV）
+              </button>
+              <button onClick={() => openExport("movie")}>
+                カット別ムービー（MP4 ZIP）
               </button>
             </div>
           )}
@@ -2226,6 +2520,8 @@ export default function Home() {
                   ? "コンテ用画像"
                   : exportKind === "wav"
                     ? "VOICEVOX音声（WAV）"
+                    : exportKind === "movie"
+                      ? "カット別ムービー（MP4 ZIP）"
                   : "保存・書き出し"}
             </h2>
             <label>
@@ -2239,6 +2535,11 @@ export default function Home() {
             {exportKind === "wav" && (
               <p className="setting-help">
                 再生設定で接続したVOICEVOXと話者スタイルを使用し、改行の間を含む一本のWAVを書き出します。
+              </p>
+            )}
+            {exportKind === "movie" && (
+              <p className="setting-help">
+                1920×1080・24fps・H.264＋AACのMP4をカットごとに生成し、ZIPにまとめます。VOICEVOXへの接続が必要です。
               </p>
             )}
             {exportKind === "xdts" && (

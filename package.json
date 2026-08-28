@@ -13,9 +13,13 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/ffmpeg": "0.12.15",
+    "@ffmpeg/util": "0.12.2",
     "jspdf": "3.0.1",
     "jszip": "3.10.1",
     "mammoth": "1.8.0",
+    "mp4-muxer": "5.2.2",
     "next": "16.2.6",
     "pdfjs-dist": "4.10.38",
     "react": "19.2.6",
