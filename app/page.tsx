@@ -1832,11 +1832,31 @@ export default function Home() {
     });
     setBusy("MP4エンジンを読み込んでいます…");
     try {
-      await ffmpeg.load({
-        classWorkerURL: `${basePath}/ffmpeg/ffmpeg-worker.js`,
-        coreURL: `${basePath}/ffmpeg/ffmpeg-core.js`,
-        wasmURL: `${basePath}/ffmpeg/ffmpeg-core.wasm`,
-      });
+      const loadController = new AbortController();
+      const loadTimeout = window.setTimeout(() => loadController.abort(), 60_000);
+      try {
+        await ffmpeg.load(
+          {
+            classWorkerURL: `${window.location.origin}${basePath}/ffmpeg/ffmpeg-worker.js`,
+            coreURL: `${window.location.origin}${basePath}/ffmpeg/ffmpeg-core.js`,
+            wasmURL: `${window.location.origin}${basePath}/ffmpeg/ffmpeg-core.wasm`,
+          },
+          { signal: loadController.signal },
+        );
+      } catch (error) {
+        if (loadController.signal.aborted) {
+          throw new Error("MP4エンジンの読み込みがタイムアウトしました。ページを再読み込みして、もう一度お試しください。");
+        }
+        const detail =
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : String(error);
+        throw new Error(`MP4エンジンを読み込めませんでした。${detail}`);
+      } finally {
+        window.clearTimeout(loadTimeout);
+      }
       for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
         activeCut = sectionIndex;
         const section = sections[sectionIndex],
@@ -2122,9 +2142,15 @@ export default function Home() {
         await exportMovieZip(name);
       } catch (error) {
         setBusy("");
-        window.alert(
-          error instanceof Error ? error.message : "MP4書き出しに失敗しました。",
-        );
+        const detail =
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : error instanceof Event
+                ? `${error.type}（ブラウザ内のMP4エンジンでエラーが発生しました）`
+                : String(error);
+        window.alert(detail || "MP4書き出しに失敗しました。");
       }
     }
   };
