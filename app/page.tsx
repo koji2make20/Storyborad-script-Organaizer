@@ -2606,26 +2606,23 @@ export default function Home() {
         <div
           ref={scenePanelRef}
           className="scene-panel editor-panel"
-          onDoubleClick={(e) => {
-            if ((e.target as HTMLElement).closest(".scene-divider")) return;
-            const rect = e.currentTarget.getBoundingClientRect(),
-              maxRow = Math.max(
-                sceneDisplayLines - 1,
-                Math.floor((rect.height - 42) / (fontSize * 1.55)) - 1,
-              ),
-              row = Math.max(
-                0,
-                Math.min(
-                  maxRow,
-                  Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
-                ),
-              );
-            addSceneDivider(row);
-          }}
         >
           <div className="panel-head">
             <b>シーン</b>
             <span>SCENE</span>
+            <button
+              type="button"
+              className="scene-add-button"
+              onClick={() =>
+                addSceneDivider(
+                  sceneDividers.length
+                    ? Math.max(...sceneDividers.map((divider) => divider.line)) + 4
+                    : 0,
+                )
+              }
+            >
+              ＋ シーン
+            </button>
           </div>
           <div className="scene-tints" aria-hidden="true">
             {sceneDividers.map((divider, index) => {
@@ -2645,7 +2642,7 @@ export default function Home() {
           </div>
           {!sceneDividers.length && (
             <p className="scene-empty-hint">
-              ダブルクリックでシーンを追加
+              「＋ シーン」で追加
             </p>
           )}
           {sceneDividers.map((divider, index) => {
@@ -2680,27 +2677,39 @@ export default function Home() {
               role="button"
               tabIndex={0}
               className="scene-divider"
-              title="ドラッグで移動・ダブルクリックで色変更・右クリックで削除"
+              title="ドラッグで移動・右クリックで色変更"
               style={{
                 top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55)`,
                 backgroundColor: divider.color,
               }}
               onPointerDown={(e) => beginSceneDrag(e, divider.id)}
-              onDoubleClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setSceneDragId(null);
-                e.currentTarget.querySelector<HTMLInputElement>('input[type="color"]')?.click();
-              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setSceneDividers((current) =>
-                  current.filter((item) => item.id !== divider.id),
-                );
+                setSceneDragId(null);
+                e.currentTarget
+                  .querySelector<HTMLInputElement>('input[type="color"]')
+                  ?.click();
               }}
             >
               <span>SCENE</span>
+              <button
+                type="button"
+                className="scene-delete-button"
+                title="シーンを削除"
+                aria-label="シーンを削除"
+                onPointerDown={(e) => e.stopPropagation()}
+                onContextMenu={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSceneDividers((current) =>
+                    current.filter((item) => item.id !== divider.id),
+                  );
+                }}
+              >
+                ×
+              </button>
               <input
                 type="color"
                 value={divider.color}
