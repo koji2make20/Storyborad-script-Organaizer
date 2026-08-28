@@ -270,6 +270,8 @@ export default function Home() {
     [resizeId, setResizeId] = useState<string | null>(null),
     [exportKind, setExportKind] = useState<ExportKind>(null),
     [exportName, setExportName] = useState("storyboard"),
+    [movieDialogueBold, setMovieDialogueBold] = useState(false),
+    [movieDialogueColor, setMovieDialogueColor] = useState("#ffffff"),
     [includeAction, setIncludeAction] = useState(false),
     [gridCount, setGridCount] = useState(6),
     [split, setSplit] = useState(50),
@@ -1635,7 +1637,9 @@ export default function Home() {
         "再生設定でVOICEVOXへ接続し、話者スタイルを設定してください。",
       );
     type SpeechItem = { speaker: string; body: string };
-    type AudioChunk = { audio: AudioBuffer } | { pauseSeconds: number };
+    type AudioChunk =
+      | { audio: AudioBuffer; body: string }
+      | { pauseSeconds: number };
     const isTrimmed = (row: number) =>
         sortedCuts.some(
           (cut) => row >= cut.line && row < cut.line + (cut.trimRows ?? 0),
@@ -1709,7 +1713,7 @@ export default function Home() {
                 setBusy(
                   `VOICEVOX音声を${retry ? "尺に合わせて再" : ""}生成中… ${Math.min(completed + 1, speechCount)} / ${speechCount}`,
                 );
-                chunks.push({ audio: await synthesize(item, speed) });
+                chunks.push({ audio: await synthesize(item, speed), body: item.body });
                 if (!retry) completed++;
               }
             }
@@ -1739,7 +1743,10 @@ export default function Home() {
       const sampleRate =
           renderedSections
             .flatMap((entry) => entry.chunks)
-            .find((chunk): chunk is { audio: AudioBuffer } => "audio" in chunk)
+            .find(
+              (chunk): chunk is { audio: AudioBuffer; body: string } =>
+                "audio" in chunk,
+            )
             ?.audio.sampleRate ?? 24000,
         totalSamples = Math.round((total / FPS) * sampleRate),
         sectionLengths = renderedSections.map((entry) =>
@@ -1753,9 +1760,11 @@ export default function Home() {
           0,
           totalSamples - previousSamples,
         );
-      const pcmSections = renderedSections.map(
+      const subtitleSections: { startFrame: number; endFrame: number; body: string }[][] = [],
+        pcmSections = renderedSections.map(
         (entry, sectionIndex) => {
           const output = new Float32Array(sectionLengths[sectionIndex]);
+          const cues: { startFrame: number; endFrame: number; body: string }[] = [];
           let position = 0;
           const sectionEnd = output.length;
         for (const chunk of entry.chunks) {
@@ -1775,6 +1784,12 @@ export default function Home() {
               sectionEnd - position,
               Math.round(chunk.audio.duration * sampleRate),
             );
+          const startFrame = Math.floor((position / sampleRate) * FPS),
+            endFrame = Math.max(
+              startFrame + 1,
+              Math.ceil(((position + length) / sampleRate) * FPS),
+            );
+          cues.push({ startFrame, endFrame, body: chunk.body });
           for (let i = 0; i < length; i++) {
             const sourceIndex = Math.min(
                 channels[0].length - 1,
@@ -1791,18 +1806,19 @@ export default function Home() {
         // Pad a short cut with silence, or finish after truncating a cut that
         // is still too long even at VOICEVOX's maximum speed.
         position = sectionEnd;
+          subtitleSections.push(cues);
           return output;
         },
       );
       setBusy("WAVファイルを作成中…");
-      return { sampleRate, pcmSections };
+      return { sampleRate, pcmSections, subtitleSections };
     } finally {
       await audioContext.close();
       setBusy("");
     }
   };
   const exportVoicevoxWav = async (name: string) => {
-    const { sampleRate, pcmSections } = await renderVoicevoxPcmSections(),
+    const { sampleRate, pcmSections, subtitleSections } = await renderVoicevoxPcmSections(),
       output = new Float32Array(
         pcmSections.reduce((sum, samples) => sum + samples.length, 0),
       );
@@ -1813,11 +1829,67 @@ export default function Home() {
     }
     download(`${name}.wav`, encodePcmWav(output, sampleRate), "audio/wav");
   };
+  const movieTimecode = (frames: number) => {
+    const minutes = Math.floor(frames / (FPS * 60)),
+      seconds = Math.floor(frames / FPS) % 60,
+      rest = frames % FPS;
+    return [minutes, seconds, rest]
+      .map((value) => String(value).padStart(2, "0"))
+      .join(":");
+  };
+  const drawMovieFrame = (
+    ctx: CanvasRenderingContext2D,
+    cutNumber: string,
+    frameNumber: number,
+    boldText = "",
+  ) => {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, 1920, 1080);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#ef3f35";
+    ctx.font = '700 64px "Yu Gothic UI", sans-serif';
+    ctx.fillText(cutNumber, 160, 80, 240);
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#fff";
+    ctx.font = '600 54px "Consolas", "Courier New", monospace';
+    ctx.fillText(movieTimecode(frameNumber), 1880, 1020);
+    if (!boldText) return;
+    ctx.save();
+    ctx.font = '700 58px "Yu Gothic UI", sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = "rgba(0,0,0,.88)";
+    ctx.fillStyle = movieDialogueColor;
+    const maxWidth = 1240,
+      chars = Array.from(boldText),
+      lines: string[] = [];
+    let line = "";
+    for (const char of chars) {
+      const candidate = line + char;
+      if (line && ctx.measureText(candidate).width > maxWidth) {
+        lines.push(line);
+        line = char;
+      } else line = candidate;
+    }
+    if (line) lines.push(line);
+    const visibleLines = lines.slice(0, 3),
+      lineHeight = 72,
+      centerY = 700 - ((visibleLines.length - 1) * lineHeight) / 2;
+    visibleLines.forEach((text, index) => {
+      const y = centerY + index * lineHeight;
+      ctx.strokeText(text, 820, y, maxWidth);
+      ctx.fillText(text, 820, y, maxWidth);
+    });
+    ctx.restore();
+  };
   const exportMovieZipWithFfmpeg = async (name: string) => {
     const { FFmpeg } = await import("@ffmpeg/ffmpeg"),
       ffmpeg = new FFmpeg(),
       basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "",
-      { sampleRate, pcmSections } = await renderVoicevoxPcmSections(),
+      { sampleRate, pcmSections, subtitleSections } = await renderVoicevoxPcmSections(),
       zip = new JSZip(),
       canvas = document.createElement("canvas");
     canvas.width = 1920;
@@ -1861,34 +1933,27 @@ export default function Home() {
         activeCut = sectionIndex;
         const section = sections[sectionIndex],
           cutNumber = xdtsCut(section.name),
-          timecode = [
-            Math.floor(section.frames / (FPS * 60)),
-            Math.floor(section.frames / FPS) % 60,
-            section.frames % FPS,
-          ]
-            .map((value) => String(value).padStart(2, "0"))
-            .join(":"),
-          pngName = `cut_${sectionIndex}.png`,
+          framePrefix = `cut_${sectionIndex}_frame_`,
           wavName = `cut_${sectionIndex}.wav`,
           mp4Name = `cut_${sectionIndex}.mp4`;
-        ctx.fillStyle = "#000";
-        ctx.fillRect(0, 0, 1920, 1080);
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillStyle = "#ef3f35";
-        ctx.font = '700 64px "Yu Gothic UI", sans-serif';
-        ctx.fillText(cutNumber, 160, 80, 240);
-        ctx.textAlign = "right";
-        ctx.fillStyle = "#fff";
-        ctx.font = '600 54px "Consolas", "Courier New", monospace';
-        ctx.fillText(timecode, 1880, 1020);
-        const png = await new Promise<Blob>((resolve, reject) =>
-          canvas.toBlob(
-            (blob) => (blob ? resolve(blob) : reject(new Error("画像生成に失敗しました。"))),
-            "image/png",
-          ),
-        );
-        await ffmpeg.writeFile(pngName, new Uint8Array(await png.arrayBuffer()));
+        const frameNames: string[] = [];
+        for (let frameIndex = 0; frameIndex < section.frames; frameIndex++) {
+          const cue = movieDialogueBold
+              ? subtitleSections[sectionIndex]?.find(
+                  (item) => frameIndex >= item.startFrame && frameIndex < item.endFrame,
+                )
+              : undefined,
+            frameName = `${framePrefix}${String(frameIndex).padStart(6, "0")}.png`;
+          drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.body);
+          const png = await new Promise<Blob>((resolve, reject) =>
+            canvas.toBlob(
+              (blob) => (blob ? resolve(blob) : reject(new Error("画像生成に失敗しました。"))),
+              "image/png",
+            ),
+          );
+          await ffmpeg.writeFile(frameName, new Uint8Array(await png.arrayBuffer()));
+          frameNames.push(frameName);
+        }
         await ffmpeg.writeFile(
           wavName,
           new Uint8Array(
@@ -1897,12 +1962,10 @@ export default function Home() {
         );
         const duration = (section.frames / FPS).toFixed(6),
           exitCode = await ffmpeg.exec([
-            "-loop",
-            "1",
             "-framerate",
             String(FPS),
             "-i",
-            pngName,
+            `${framePrefix}%06d.png`,
             "-i",
             wavName,
             "-t",
@@ -1932,7 +1995,7 @@ export default function Home() {
         if (typeof movie === "string") throw new Error("MP4データを取得できませんでした。");
         zip.file(`${cutNumber}.mp4`, movie);
         await Promise.all([
-          ffmpeg.deleteFile(pngName),
+          ...frameNames.map((frameName) => ffmpeg.deleteFile(frameName)),
           ffmpeg.deleteFile(wavName),
           ffmpeg.deleteFile(mp4Name),
         ]);
@@ -1980,7 +2043,7 @@ export default function Home() {
       audioSupport = await AudioEncoder.isConfigSupported(audioConfig);
     if (!audioSupport.supported)
       throw new Error("この端末ではAACエンコーダーを利用できません。");
-    const { sampleRate, pcmSections } = await renderVoicevoxPcmSections(),
+    const { sampleRate, pcmSections, subtitleSections } = await renderVoicevoxPcmSections(),
       zip = new JSZip(),
       canvas = document.createElement("canvas");
     canvas.width = 1920;
@@ -2000,14 +2063,6 @@ export default function Home() {
           result[i] = source[before] * (1 - ratio) + source[after] * ratio;
         }
         return result;
-      },
-      timecode = (frames: number) => {
-        const minutes = Math.floor(frames / (FPS * 60)),
-          seconds = Math.floor(frames / FPS) % 60,
-          rest = frames % FPS;
-        return [minutes, seconds, rest]
-          .map((value) => String(value).padStart(2, "0"))
-          .join(":");
       };
     for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
       const section = sections[sectionIndex],
@@ -2038,21 +2093,16 @@ export default function Home() {
         });
       videoEncoder.configure(videoConfig);
       audioEncoder.configure(audioSupport.config ?? audioConfig);
-      ctx.fillStyle = "#000";
-      ctx.fillRect(0, 0, 1920, 1080);
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "#ef3f35";
-      ctx.font = '700 64px "Yu Gothic UI", sans-serif';
-      ctx.fillText(cutNumber, 40 + 120, 40 + 40, 240);
-      ctx.textAlign = "right";
-      ctx.fillStyle = "#fff";
-      ctx.font = '600 54px "Consolas", "Courier New", monospace';
-      ctx.fillText(timecode(section.frames), 1880, 1020);
       for (let frameIndex = 0; frameIndex < section.frames; frameIndex++) {
         setBusy(
           `MP4映像を生成中… CUT ${cutNumber}（${sectionIndex + 1} / ${sections.length}）`,
         );
+        const cue = movieDialogueBold
+          ? subtitleSections[sectionIndex]?.find(
+              (item) => frameIndex >= item.startFrame && frameIndex < item.endFrame,
+            )
+          : undefined;
+        drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.body);
         const frame = new VideoFrame(canvas, {
           timestamp: Math.round((frameIndex / FPS) * 1_000_000),
           duration: Math.round(1_000_000 / FPS),
@@ -2565,9 +2615,34 @@ export default function Home() {
               </p>
             )}
             {exportKind === "movie" && (
-              <p className="setting-help">
-                1920×1080・24fps・H.264＋AACのMP4をカットごとに生成し、ZIPにまとめます。VOICEVOXへの接続が必要です。
-              </p>
+              <div className="story-settings">
+                <p className="setting-help">
+                  1920×1080・24fps・H.264＋AACのMP4をカットごとに生成し、ZIPにまとめます。
+                </p>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={movieDialogueBold}
+                    onChange={(e) => setMovieDialogueBold(e.target.checked)}
+                  />
+                  セリフボールドを追加する
+                </label>
+                {movieDialogueBold && (
+                  <label>
+                    セリフボールドの色
+                    <input
+                      type="color"
+                      value={movieDialogueColor}
+                      onChange={(e) => setMovieDialogueColor(e.target.value)}
+                    />
+                  </label>
+                )}
+                {movieDialogueBold && (
+                  <p className="setting-help">
+                    VOICEVOX音声の発話中だけ、画面中央より少し左下に表示します。
+                  </p>
+                )}
+              </div>
             )}
             {exportKind === "xdts" && (
               <div className="color-settings">
