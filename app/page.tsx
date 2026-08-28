@@ -2629,6 +2629,8 @@ export default function Home() {
             <button
               type="button"
               className="scene-add-button"
+              title="シーンを追加"
+              aria-label="シーンを追加"
               onClick={() =>
                 addSceneDivider(
                   sceneDividers.length
@@ -2637,7 +2639,7 @@ export default function Home() {
                 )
               }
             >
-              ＋ シーン
+              ＋
             </button>
           </div>
           <div className="scene-tints" aria-hidden="true">
@@ -2658,7 +2660,7 @@ export default function Home() {
           </div>
           {!sceneDividers.length && (
             <p className="scene-empty-hint">
-              ダブルクリックまたは「＋ シーン」で追加
+              ダブルクリックまたは「＋」で追加
             </p>
           )}
           {sceneDividers.map((divider, index) => {
