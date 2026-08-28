@@ -2606,6 +2606,22 @@ export default function Home() {
         <div
           ref={scenePanelRef}
           className="scene-panel editor-panel"
+          onDoubleClick={(e) => {
+            if ((e.target as HTMLElement).closest(".scene-divider")) return;
+            const rect = e.currentTarget.getBoundingClientRect(),
+              maxRow = Math.max(
+                sceneDisplayLines - 1,
+                Math.floor((rect.height - 42) / (fontSize * 1.55)) - 1,
+              ),
+              row = Math.max(
+                0,
+                Math.min(
+                  maxRow,
+                  Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
+                ),
+              );
+            addSceneDivider(row);
+          }}
         >
           <div className="panel-head">
             <b>シーン</b>
@@ -2642,7 +2658,7 @@ export default function Home() {
           </div>
           {!sceneDividers.length && (
             <p className="scene-empty-hint">
-              「＋ シーン」で追加
+              ダブルクリックまたは「＋ シーン」で追加
             </p>
           )}
           {sceneDividers.map((divider, index) => {
