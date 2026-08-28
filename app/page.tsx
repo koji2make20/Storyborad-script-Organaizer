@@ -14,7 +14,7 @@ type Cut = {
   manual?: boolean;
 };
 type Section = { start: number; end: number; name: string; frames: number };
-type SceneDivider = { id: string; line: number; color: string };
+type SceneDivider = { id: string; line: number; color: string; text: string };
 type VoicevoxStyle = { id: number; name: string; speaker: string };
 type HistorySnapshot = {
   action: string;
@@ -295,6 +295,8 @@ export default function Home() {
     [editingCutNameId, setEditingCutNameId] = useState<string | null>(null),
     [cutNameDraft, setCutNameDraft] = useState(""),
     [sceneDragId, setSceneDragId] = useState<string | null>(null),
+    [sceneWidth, setSceneWidth] = useState(190),
+    [sceneWidthDragging, setSceneWidthDragging] = useState(false),
     [splitDragging, setSplitDragging] = useState(false),
     [speaking, setSpeaking] = useState(false),
     [playbackOpen, setPlaybackOpen] = useState(false),
@@ -365,7 +367,7 @@ export default function Home() {
       workspaceRef.current.scrollLeft = pending.workspaceScrollLeft;
     }
     pendingSelectionRef.current = null;
-  }, [action, dialogue]);
+  }, [action, dialogue, sceneText]);
   useEffect(() => {
     const active = document.activeElement,
       focusSide =
@@ -437,6 +439,15 @@ export default function Home() {
       action.split("\n").length,
       dialogue.split("\n").length,
       1,
+    ),
+    sceneLines = Math.max(
+      sceneText.split("\n").length,
+      ...sceneDividers.map((divider) => divider.line + 2),
+      1,
+    ),
+    sceneDisplayLines = Math.max(
+      sceneLines,
+      Math.ceil(560 / (fontSize * 1.55)),
     ),
     actionLines = action.split("\n"),
     dialogueLines = dialogue.split("\n");
@@ -545,30 +556,10 @@ export default function Home() {
         }
         return [...byLine.values()].sort((a, b) => a.line - b.line);
       });
-    if (delta !== 0)
-      setSceneDividers((current) =>
-        current
-          .map((divider) =>
-            divider.line > changed
-              ? {
-                  ...divider,
-                  line: Math.max(0, changed, divider.line + delta),
-                }
-              : divider,
-          )
-          .filter(
-            (divider, index, all) =>
-              all.findIndex((item) => item.line === divider.line) === index,
-          ),
-      );
     const other = (side === "action" ? dialogue : action).split("\n");
-    const sceneRows = sceneText.split("\n");
     if (delta > 0) other.splice(changed, 0, ...Array(delta).fill(""));
     else if (delta < 0) other.splice(changed, -delta);
-    if (delta > 0) sceneRows.splice(changed, 0, ...Array(delta).fill(""));
-    else if (delta < 0) sceneRows.splice(changed, -delta);
     while (other.length < own.length) other.push("");
-    while (sceneRows.length < own.length) sceneRows.push("");
     const next = own.join("\n");
     if (side === "action") {
       setAction(next);
@@ -577,7 +568,6 @@ export default function Home() {
       setDialogue(next);
       setAction(other.join("\n"));
     }
-    setSceneText(sceneRows.slice(0, own.length).join("\n"));
     if (caret != null) {
       const target = side === "action" ? actionRef.current : dialogueRef.current;
       pendingSelectionRef.current = {
@@ -600,23 +590,7 @@ export default function Home() {
       oldRows[changed] === nextRows[changed]
     )
       changed++;
-    const adjustRows = (text: string) => {
-      const rows = text.split("\n");
-      if (delta > 0) rows.splice(changed, 0, ...Array(delta).fill(""));
-      else if (delta < 0) rows.splice(changed, -delta);
-      while (rows.length < nextRows.length) rows.push("");
-      return rows.join("\n");
-    };
     if (delta) {
-      setAction((current) => adjustRows(current));
-      setDialogue((current) => adjustRows(current));
-      setCuts((current) =>
-        current.map((cut) =>
-          cut.line > changed
-            ? { ...cut, line: Math.max(1, cut.line + delta), manual: false }
-            : cut,
-        ),
-      );
       setSceneDividers((current) =>
         current.map((divider) =>
           divider.line > changed
@@ -798,6 +772,11 @@ export default function Home() {
     const usable = Math.max(1, dialogueRect.right - actionRect.left - 8),
       left = e.clientX - actionRect.left;
     setSplit(Math.max(25, Math.min(75, (left / usable) * 100)));
+  };
+  const resizeSceneColumn = (e: React.PointerEvent) => {
+    if (!sceneWidthDragging || !scenePanelRef.current) return;
+    const rect = scenePanelRef.current.getBoundingClientRect();
+    setSceneWidth(Math.max(120, Math.min(520, e.clientX - rect.left)));
   };
   const stopVoicevoxAudio = () => {
     voicevoxAudioRef.current?.pause();
@@ -1035,7 +1014,7 @@ export default function Home() {
         ? current
         : [
             ...current,
-            { id: crypto.randomUUID(), line, color: "#8b8b8b" },
+            { id: crypto.randomUUID(), line, color: "#8b8b8b", text: "" },
           ].sort((a, b) => a.line - b.line),
     );
   const beginSceneDrag = (e: React.PointerEvent, id: string) => {
@@ -1047,10 +1026,14 @@ export default function Home() {
   const moveSceneDivider = (e: React.PointerEvent) => {
     if (!sceneDragId || !scenePanelRef.current) return;
     const rect = scenePanelRef.current.getBoundingClientRect(),
+      maxRow = Math.max(
+        sceneDisplayLines - 1,
+        Math.floor((rect.height - 42) / (fontSize * 1.55)) - 1,
+      ),
       row = Math.max(
         0,
         Math.min(
-          lines - 1,
+          maxRow,
           Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
         ),
       );
@@ -1168,13 +1151,21 @@ export default function Home() {
         setSceneDividers(
           Array.isArray(p.scene_dividers)
             ? p.scene_dividers
-                .map((divider: Partial<SceneDivider>) => ({
+                .map((divider: Partial<SceneDivider>, index: number) => ({
                   id: divider.id ?? crypto.randomUUID(),
                   line: Math.max(0, Number(divider.line) || 0),
                   color: divider.color ?? "#8b8b8b",
+                  text:
+                    typeof divider.text === "string"
+                      ? divider.text
+                      : index === 0
+                        ? String(p.scene_text ?? "")
+                        : "",
                 }))
             : [],
         );
+        if (Number.isFinite(Number(p.scene_width)))
+          setSceneWidth(Math.max(120, Math.min(520, Number(p.scene_width))));
         setDialoguePatterns(p.dialogue_patterns ?? ["A「B」", "A『B』"]);
         const oldPunctuation = Boolean(p.break_at_punctuation);
         setBreakComma(Boolean(p.break_at_comma ?? oldPunctuation));
@@ -1343,7 +1334,7 @@ export default function Home() {
       const { left, right } = splitImportedText(text);
       setAction(left.join("\n"));
       setDialogue(right.join("\n"));
-      setSceneText(Array(Math.max(left.length, right.length, 1)).fill("").join("\n"));
+      setSceneText("");
       setSceneDividers([]);
       setFirstCutName("1");
       setCuts([]);
@@ -1380,6 +1371,7 @@ export default function Home() {
         dialogue,
         scene_text: sceneText,
         scene_dividers: sceneDividers,
+        scene_width: sceneWidth,
         first_cut_name: firstCutName,
         cuts: sortedCuts,
         cut_names: sections.map((s) => s.name),
@@ -2447,12 +2439,14 @@ export default function Home() {
       onPointerMove={(e) => {
         dragMove(e);
         moveSceneDivider(e);
+        resizeSceneColumn(e);
         resizeColumns(e);
       }}
       onPointerUp={() => {
         setDragId(null);
         setResizeId(null);
         setSceneDragId(null);
+        setSceneWidthDragging(false);
         setSplitDragging(false);
       }}
       onKeyDownCapture={handleHistoryKeyDown}
@@ -2599,11 +2593,13 @@ export default function Home() {
       </section>
       <section
         ref={workspaceRef}
-        className={`workspace ${dragId || resizeId || sceneDragId || splitDragging ? "is-dragging" : ""}`}
+        className={`workspace ${dragId || resizeId || sceneDragId || sceneWidthDragging || splitDragging ? "is-dragging" : ""}`}
         style={
           {
             "--editor-font": `${fontSize}px`,
             "--editor-lines": lines,
+            "--scene-lines": sceneDisplayLines,
+            "--scene-width": `${sceneWidth}px`,
           } as React.CSSProperties
         }
       >
@@ -2613,10 +2609,14 @@ export default function Home() {
           onDoubleClick={(e) => {
             if ((e.target as HTMLElement).closest(".scene-divider")) return;
             const rect = e.currentTarget.getBoundingClientRect(),
+              maxRow = Math.max(
+                sceneDisplayLines - 1,
+                Math.floor((rect.height - 42) / (fontSize * 1.55)) - 1,
+              ),
               row = Math.max(
                 0,
                 Math.min(
-                  lines - 1,
+                  maxRow,
                   Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
                 ),
               );
@@ -2629,7 +2629,8 @@ export default function Home() {
           </div>
           <div className="scene-tints" aria-hidden="true">
             {sceneDividers.map((divider, index) => {
-              const nextLine = sceneDividers[index + 1]?.line ?? lines;
+              const nextLine =
+                sceneDividers[index + 1]?.line ?? sceneDisplayLines;
               return (
                 <i
                   key={divider.id}
@@ -2642,15 +2643,37 @@ export default function Home() {
               );
             })}
           </div>
-          <textarea
-            ref={sceneRef}
-            wrap="off"
-            spellCheck={false}
-            value={sceneText}
-            onChange={(e) =>
-              syncScene(e.target.value, e.target.selectionStart)
-            }
-          />
+          {!sceneDividers.length && (
+            <p className="scene-empty-hint">
+              ダブルクリックでシーンを追加
+            </p>
+          )}
+          {sceneDividers.map((divider, index) => {
+            const nextLine =
+              sceneDividers[index + 1]?.line ?? sceneDisplayLines;
+            return (
+              <textarea
+                key={`${divider.id}-text`}
+                className="scene-section-editor"
+                wrap="soft"
+                spellCheck={false}
+                value={divider.text}
+                style={{
+                  top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55 + 20px)`,
+                  height: `max(24px, calc(${Math.max(1, nextLine - divider.line)} * var(--editor-font) * 1.55 - 20px))`,
+                }}
+                onChange={(e) =>
+                  setSceneDividers((current) =>
+                    current.map((item) =>
+                      item.id === divider.id
+                        ? { ...item, text: e.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+            );
+          })}
           {sceneDividers.map((divider) => (
             <div
               key={divider.id}
@@ -2659,7 +2682,7 @@ export default function Home() {
               className="scene-divider"
               title="ドラッグで移動・ダブルクリックで色変更・右クリックで削除"
               style={{
-                top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55 - 10px)`,
+                top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55)`,
                 backgroundColor: divider.color,
               }}
               onPointerDown={(e) => beginSceneDrag(e, divider.id)}
@@ -2695,6 +2718,17 @@ export default function Home() {
             </div>
           ))}
         </div>
+        <div
+          className="scene-column-divider"
+          role="separator"
+          aria-label="シーン欄の横幅を調整"
+          aria-orientation="vertical"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setSceneWidthDragging(true);
+          }}
+        />
         <aside className="rail">
           <span>CUT</span>
           {Array.from({ length: lines }, (_, i) => {

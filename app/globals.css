@@ -101,30 +101,33 @@
 .workspace {
   --scene-width: clamp(150px, 12vw, 250px);
   grid-template-columns:
-    var(--scene-width) 58px minmax(0, var(--left-col)) 8px minmax(0, var(--right-col))
+    var(--scene-width) 8px 58px minmax(0, var(--left-col)) 8px minmax(0, var(--right-col))
     80px !important;
 }
 .workspace > .scene-panel {
   grid-column: 1;
 }
 .workspace > .rail {
-  grid-column: 2;
-}
-.workspace > .editor-panel:not(.dialogue):not(.scene-panel) {
   grid-column: 3;
 }
-.workspace > .editor-panel.dialogue {
-  grid-column: 5;
-}
-.workspace > .column-divider {
+.workspace > .editor-panel:not(.dialogue):not(.scene-panel) {
   grid-column: 4;
 }
-.workspace > .cut-layer {
+.workspace > .editor-panel.dialogue {
   grid-column: 6;
+}
+.workspace > .column-divider {
+  grid-column: 5;
+}
+.workspace > .scene-column-divider {
+  grid-column: 2;
+}
+.workspace > .cut-layer {
+  grid-column: 7;
   grid-row: 1;
 }
 .cut-overlay {
-  left: calc(28px + var(--scene-width) + 58px) !important;
+  left: calc(28px + var(--scene-width) + 8px + 58px) !important;
   right: 108px !important;
 }
 .normalize-inline {
@@ -572,6 +575,8 @@ body {
 .scene-panel {
   position: relative;
   overflow: hidden;
+  min-height: 602px;
+  height: calc(42px + var(--scene-lines) * var(--editor-font) * 1.55);
   border-radius: 8px 0 0 8px;
   border-right: 0;
 }
@@ -581,6 +586,39 @@ body {
   padding-right: 10px;
   padding-left: 10px;
   background-color: transparent;
+  height: calc(var(--scene-lines) * var(--editor-font) * 1.55);
+}
+.scene-panel > .scene-section-editor {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0 !important;
+  margin: 0;
+  padding: 5px 12px !important;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font:
+    400 var(--editor-font) / 1.55 "Yu Gothic UI",
+    sans-serif;
+  white-space: pre-wrap !important;
+  overflow: auto;
+  resize: none;
+}
+.scene-empty-hint {
+  position: absolute;
+  z-index: 3;
+  top: 56px;
+  right: 10px;
+  left: 10px;
+  margin: 0;
+  color: #99938b;
+  font-size: 11px;
+  text-align: center;
+  pointer-events: none;
 }
 .scene-tints {
   position: absolute;
@@ -626,6 +664,27 @@ body {
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+.scene-column-divider {
+  position: relative;
+  z-index: 9;
+  min-width: 8px;
+  background: #ebe8e1;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.scene-column-divider::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: #b9b3a9;
+}
+.scene-column-divider:hover::after,
+.is-dragging .scene-column-divider::after {
+  background: var(--accent);
 }
 .editor-panel.dialogue {
   border-radius: 0 8px 8px 0;
@@ -973,7 +1032,7 @@ footer {
     padding: 10px;
     --scene-width: 150px;
     grid-template-columns:
-      var(--scene-width) 42px minmax(250px, var(--left-col)) 8px
+      var(--scene-width) 8px 42px minmax(250px, var(--left-col)) 8px
       minmax(250px, var(--right-col)) 55px !important;
     overflow-x: auto;
   }
