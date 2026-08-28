@@ -14,12 +14,16 @@ type Cut = {
   manual?: boolean;
 };
 type Section = { start: number; end: number; name: string; frames: number };
+type SceneDivider = { id: string; line: number; color: string };
 type VoicevoxStyle = { id: number; name: string; speaker: string };
 type HistorySnapshot = {
   action: string;
   dialogue: string;
+  sceneText: string;
+  firstCutName: string;
   cuts: Cut[];
-  focusSide: "action" | "dialogue" | null;
+  sceneDividers: SceneDivider[];
+  focusSide: "scene" | "action" | "dialogue" | null;
   selectionStart: number;
   selectionEnd: number;
   workspaceScrollTop: number;
@@ -257,8 +261,11 @@ const drawVertical = (
 export default function Home() {
   const [action, setAction] = useState(sampleA),
     [dialogue, setDialogue] = useState(sampleD),
+    [sceneText, setSceneText] = useState(""),
+    [sceneDividers, setSceneDividers] = useState<SceneDivider[]>([]),
     [cps, setCps] = useState(8),
     [mode, setMode] = useState<"frames" | "seconds">("frames"),
+    [firstCutName, setFirstCutName] = useState("1"),
     [cuts, setCuts] = useState<Cut[]>([
       { id: "cut-1", name: "2", line: 5, trimRows: 0 },
     ]),
@@ -285,6 +292,9 @@ export default function Home() {
     [selectedCutIds, setSelectedCutIds] = useState<Set<string>>(new Set()),
     [editingDurationId, setEditingDurationId] = useState<string | null>(null),
     [durationDraft, setDurationDraft] = useState(""),
+    [editingCutNameId, setEditingCutNameId] = useState<string | null>(null),
+    [cutNameDraft, setCutNameDraft] = useState(""),
+    [sceneDragId, setSceneDragId] = useState<string | null>(null),
     [splitDragging, setSplitDragging] = useState(false),
     [speaking, setSpeaking] = useState(false),
     [playbackOpen, setPlaybackOpen] = useState(false),
@@ -306,12 +316,14 @@ export default function Home() {
     workspaceRef = useRef<HTMLElement>(null),
     actionRef = useRef<HTMLTextAreaElement>(null),
     dialogueRef = useRef<HTMLTextAreaElement>(null),
+    sceneRef = useRef<HTMLTextAreaElement>(null),
+    scenePanelRef = useRef<HTMLDivElement>(null),
     dialogueEnterRef = useRef<{
       speaker: string;
       inherit: boolean;
     } | null>(null),
     pendingSelectionRef = useRef<{
-      side: "action" | "dialogue";
+      side: "scene" | "action" | "dialogue";
       position: number;
       end?: number;
       scrollTop: number;
@@ -334,7 +346,11 @@ export default function Home() {
     const pending = pendingSelectionRef.current;
     if (!pending) return;
     const target =
-      pending.side === "action" ? actionRef.current : dialogueRef.current;
+      pending.side === "scene"
+        ? sceneRef.current
+        : pending.side === "action"
+          ? actionRef.current
+          : dialogueRef.current;
     if (!target) return;
     const position = Math.min(target.value.length, pending.position);
     target.focus({ preventScroll: true });
@@ -353,13 +369,17 @@ export default function Home() {
   useEffect(() => {
     const active = document.activeElement,
       focusSide =
-        active === actionRef.current
+        active === sceneRef.current
+          ? "scene"
+          : active === actionRef.current
           ? "action"
           : active === dialogueRef.current
             ? "dialogue"
             : null,
       focusTarget =
-        focusSide === "action"
+        focusSide === "scene"
+          ? sceneRef.current
+          : focusSide === "action"
           ? actionRef.current
           : focusSide === "dialogue"
             ? dialogueRef.current
@@ -367,7 +387,10 @@ export default function Home() {
       snapshot: HistorySnapshot = {
         action,
         dialogue,
+        sceneText,
+        firstCutName,
         cuts: cuts.map((cut) => ({ ...cut })),
+        sceneDividers: sceneDividers.map((divider) => ({ ...divider })),
         focusSide,
         selectionStart: focusTarget?.selectionStart ?? 0,
         selectionEnd: focusTarget?.selectionEnd ?? 0,
@@ -380,12 +403,17 @@ export default function Home() {
       current &&
       current.action === action &&
       current.dialogue === dialogue &&
-      JSON.stringify(current.cuts) === JSON.stringify(cuts)
+      current.sceneText === sceneText &&
+      current.firstCutName === firstCutName &&
+      JSON.stringify(current.cuts) === JSON.stringify(cuts) &&
+      JSON.stringify(current.sceneDividers) === JSON.stringify(sceneDividers)
     )
       return;
     const kind: "text" | "cuts" =
         current &&
-        (current.action !== action || current.dialogue !== dialogue)
+        (current.action !== action ||
+          current.dialogue !== dialogue ||
+          current.sceneText !== sceneText)
           ? "text"
           : "cuts",
       now = performance.now(),
@@ -404,7 +432,7 @@ export default function Home() {
       historyIndexRef.current = next.length - 1;
     }
     historyGroupRef.current = { kind, at: now };
-  }, [action, dialogue, cuts]);
+  }, [action, dialogue, sceneText, firstCutName, cuts, sceneDividers]);
   const lines = Math.max(
       action.split("\n").length,
       dialogue.split("\n").length,
@@ -446,11 +474,11 @@ export default function Home() {
       return {
         start,
         end,
-        name: i ? (cut?.name ?? String(i + 1)) : "1",
+        name: i ? (cut?.name ?? String(i + 1)) : firstCutName,
         frames: endCut?.manual && endCut.frames != null ? endCut.frames : auto,
       };
     });
-  }, [sortedCuts, lines, dialogue, cps]);
+  }, [sortedCuts, lines, dialogue, cps, firstCutName]);
   const total = sections.reduce((n, s) => n + s.frames, 0);
   const speakers = useMemo(() => {
     const list: string[] = [];
@@ -517,10 +545,30 @@ export default function Home() {
         }
         return [...byLine.values()].sort((a, b) => a.line - b.line);
       });
+    if (delta !== 0)
+      setSceneDividers((current) =>
+        current
+          .map((divider) =>
+            divider.line > changed
+              ? {
+                  ...divider,
+                  line: Math.max(0, changed, divider.line + delta),
+                }
+              : divider,
+          )
+          .filter(
+            (divider, index, all) =>
+              all.findIndex((item) => item.line === divider.line) === index,
+          ),
+      );
     const other = (side === "action" ? dialogue : action).split("\n");
+    const sceneRows = sceneText.split("\n");
     if (delta > 0) other.splice(changed, 0, ...Array(delta).fill(""));
     else if (delta < 0) other.splice(changed, -delta);
+    if (delta > 0) sceneRows.splice(changed, 0, ...Array(delta).fill(""));
+    else if (delta < 0) sceneRows.splice(changed, -delta);
     while (other.length < own.length) other.push("");
+    while (sceneRows.length < own.length) sceneRows.push("");
     const next = own.join("\n");
     if (side === "action") {
       setAction(next);
@@ -529,6 +577,7 @@ export default function Home() {
       setDialogue(next);
       setAction(other.join("\n"));
     }
+    setSceneText(sceneRows.slice(0, own.length).join("\n"));
     if (caret != null) {
       const target = side === "action" ? actionRef.current : dialogueRef.current;
       pendingSelectionRef.current = {
@@ -541,12 +590,93 @@ export default function Home() {
       };
     }
   };
-  const normalize = () =>
+  const syncScene = (value: string, caret: number | null) => {
+    const oldRows = sceneText.split("\n"),
+      nextRows = value.split("\n"),
+      delta = nextRows.length - oldRows.length;
+    let changed = 0;
+    while (
+      changed < Math.min(oldRows.length, nextRows.length) &&
+      oldRows[changed] === nextRows[changed]
+    )
+      changed++;
+    const adjustRows = (text: string) => {
+      const rows = text.split("\n");
+      if (delta > 0) rows.splice(changed, 0, ...Array(delta).fill(""));
+      else if (delta < 0) rows.splice(changed, -delta);
+      while (rows.length < nextRows.length) rows.push("");
+      return rows.join("\n");
+    };
+    if (delta) {
+      setAction((current) => adjustRows(current));
+      setDialogue((current) => adjustRows(current));
+      setCuts((current) =>
+        current.map((cut) =>
+          cut.line > changed
+            ? { ...cut, line: Math.max(1, cut.line + delta), manual: false }
+            : cut,
+        ),
+      );
+      setSceneDividers((current) =>
+        current.map((divider) =>
+          divider.line > changed
+            ? { ...divider, line: Math.max(0, divider.line + delta) }
+            : divider,
+        ),
+      );
+    }
+    setSceneText(nextRows.join("\n"));
+    if (caret != null)
+      pendingSelectionRef.current = {
+        side: "scene",
+        position: caret,
+        scrollTop: sceneRef.current?.scrollTop ?? 0,
+        scrollLeft: sceneRef.current?.scrollLeft ?? 0,
+        workspaceScrollTop: workspaceRef.current?.scrollTop ?? 0,
+        workspaceScrollLeft: workspaceRef.current?.scrollLeft ?? 0,
+      };
+  };
+  const normalize = () => {
+    setFirstCutName("1");
     setCuts((v) =>
       [...v]
         .sort((a, b) => a.line - b.line)
         .map((c, i) => ({ ...c, name: String(i + 2) })),
     );
+  };
+  const startCutNameEdit = (id: string, name: string) => {
+    setEditingCutNameId(id);
+    setCutNameDraft(name);
+  };
+  const commitCutName = () => {
+    const id = editingCutNameId,
+      name = cutNameDraft.trim();
+    setEditingCutNameId(null);
+    if (!id || !name) return;
+    const entries = [
+      { id: "first-cut", name: id === "first-cut" ? name : firstCutName },
+      ...sortedCuts.map((cut) => ({
+        id: cut.id,
+        name: cut.id === id ? name : cut.name,
+      })),
+    ];
+    const duplicates = entries.filter((entry) => entry.name === name);
+    const renamed = new Map<string, string>();
+    if (duplicates.length > 1)
+      duplicates.forEach((entry, index) =>
+        renamed.set(entry.id, `${name}${String.fromCharCode(65 + index)}`),
+      );
+    else renamed.set(id, name);
+    setFirstCutName(renamed.get("first-cut") ?? entries[0].name);
+    setCuts((current) =>
+      current.map((cut) => ({
+        ...cut,
+        name: renamed.get(cut.id) ??
+          entries.find((entry) => entry.id === cut.id)?.name ??
+          cut.name,
+      })),
+    );
+  };
   const applyHistory = (nextIndex: number) => {
     const history = historyRef.current,
       snapshot = history[nextIndex];
@@ -558,12 +688,19 @@ export default function Home() {
     setSpeaking(false);
     setAction(snapshot.action);
     setDialogue(snapshot.dialogue);
+    setSceneText(snapshot.sceneText ?? "");
+    setFirstCutName(snapshot.firstCutName ?? "1");
     setCuts(snapshot.cuts.map((cut) => ({ ...cut })));
+    setSceneDividers(
+      (snapshot.sceneDividers ?? []).map((divider) => ({ ...divider })),
+    );
     if (snapshot.focusSide) {
       const target =
-        snapshot.focusSide === "action"
-          ? actionRef.current
-          : dialogueRef.current;
+        snapshot.focusSide === "scene"
+          ? sceneRef.current
+          : snapshot.focusSide === "action"
+            ? actionRef.current
+            : dialogueRef.current;
       pendingSelectionRef.current = {
         side: snapshot.focusSide,
         position: snapshot.selectionStart,
@@ -892,6 +1029,41 @@ export default function Home() {
     );
     setDragId(id);
   };
+  const addSceneDivider = (line: number) =>
+    setSceneDividers((current) =>
+      current.some((divider) => divider.line === line)
+        ? current
+        : [
+            ...current,
+            { id: crypto.randomUUID(), line, color: "#8b8b8b" },
+          ].sort((a, b) => a.line - b.line),
+    );
+  const beginSceneDrag = (e: React.PointerEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setSceneDragId(id);
+  };
+  const moveSceneDivider = (e: React.PointerEvent) => {
+    if (!sceneDragId || !scenePanelRef.current) return;
+    const rect = scenePanelRef.current.getBoundingClientRect(),
+      row = Math.max(
+        0,
+        Math.min(
+          lines - 1,
+          Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
+        ),
+      );
+    setSceneDividers((current) => {
+      if (current.some((divider) => divider.id !== sceneDragId && divider.line === row))
+        return current;
+      return current
+        .map((divider) =>
+          divider.id === sceneDragId ? { ...divider, line: row } : divider,
+        )
+        .sort((a, b) => a.line - b.line);
+    });
+  };
   const beginResize = (e: React.PointerEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -991,6 +1163,18 @@ export default function Home() {
         setCps(Number(p.chars_per_sec ?? 8));
         setFontSize(Number(p.font_size ?? 15));
         setMode(Number(p.mode) === 1 ? "seconds" : "frames");
+        setFirstCutName(String(p.first_cut_name ?? p.cut_names?.[0] ?? "1"));
+        setSceneText(String(p.scene_text ?? ""));
+        setSceneDividers(
+          Array.isArray(p.scene_dividers)
+            ? p.scene_dividers
+                .map((divider: Partial<SceneDivider>) => ({
+                  id: divider.id ?? crypto.randomUUID(),
+                  line: Math.max(0, Number(divider.line) || 0),
+                  color: divider.color ?? "#8b8b8b",
+                }))
+            : [],
+        );
         setDialoguePatterns(p.dialogue_patterns ?? ["A「B」", "A『B』"]);
         const oldPunctuation = Boolean(p.break_at_punctuation);
         setBreakComma(Boolean(p.break_at_comma ?? oldPunctuation));
@@ -1159,6 +1343,9 @@ export default function Home() {
       const { left, right } = splitImportedText(text);
       setAction(left.join("\n"));
       setDialogue(right.join("\n"));
+      setSceneText(Array(Math.max(left.length, right.length, 1)).fill("").join("\n"));
+      setSceneDividers([]);
+      setFirstCutName("1");
       setCuts([]);
     } catch (error) {
       window.alert(
@@ -1191,6 +1378,9 @@ export default function Home() {
         font_size: fontSize,
         action,
         dialogue,
+        scene_text: sceneText,
+        scene_dividers: sceneDividers,
+        first_cut_name: firstCutName,
         cuts: sortedCuts,
         cut_names: sections.map((s) => s.name),
         speaker_colors: speakerColors,
@@ -2256,11 +2446,13 @@ export default function Home() {
       }
       onPointerMove={(e) => {
         dragMove(e);
+        moveSceneDivider(e);
         resizeColumns(e);
       }}
       onPointerUp={() => {
         setDragId(null);
         setResizeId(null);
+        setSceneDragId(null);
         setSplitDragging(false);
       }}
       onKeyDownCapture={handleHistoryKeyDown}
@@ -2407,7 +2599,7 @@ export default function Home() {
       </section>
       <section
         ref={workspaceRef}
-        className={`workspace ${dragId || resizeId || splitDragging ? "is-dragging" : ""}`}
+        className={`workspace ${dragId || resizeId || sceneDragId || splitDragging ? "is-dragging" : ""}`}
         style={
           {
             "--editor-font": `${fontSize}px`,
@@ -2415,11 +2607,117 @@ export default function Home() {
           } as React.CSSProperties
         }
       >
+        <div
+          ref={scenePanelRef}
+          className="scene-panel editor-panel"
+          onDoubleClick={(e) => {
+            if ((e.target as HTMLElement).closest(".scene-divider")) return;
+            const rect = e.currentTarget.getBoundingClientRect(),
+              row = Math.max(
+                0,
+                Math.min(
+                  lines - 1,
+                  Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
+                ),
+              );
+            addSceneDivider(row);
+          }}
+        >
+          <div className="panel-head">
+            <b>シーン</b>
+            <span>SCENE</span>
+          </div>
+          <div className="scene-tints" aria-hidden="true">
+            {sceneDividers.map((divider, index) => {
+              const nextLine = sceneDividers[index + 1]?.line ?? lines;
+              return (
+                <i
+                  key={divider.id}
+                  style={{
+                    top: `calc(${divider.line} * var(--editor-font) * 1.55)`,
+                    height: `calc(${Math.max(1, nextLine - divider.line)} * var(--editor-font) * 1.55)`,
+                    backgroundColor: `${divider.color}18`,
+                  }}
+                />
+              );
+            })}
+          </div>
+          <textarea
+            ref={sceneRef}
+            wrap="off"
+            spellCheck={false}
+            value={sceneText}
+            onChange={(e) =>
+              syncScene(e.target.value, e.target.selectionStart)
+            }
+          />
+          {sceneDividers.map((divider) => (
+            <div
+              key={divider.id}
+              role="button"
+              tabIndex={0}
+              className="scene-divider"
+              title="ドラッグで移動・ダブルクリックで色変更・右クリックで削除"
+              style={{
+                top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55 - 10px)`,
+                backgroundColor: divider.color,
+              }}
+              onPointerDown={(e) => beginSceneDrag(e, divider.id)}
+              onDoubleClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setSceneDragId(null);
+                e.currentTarget.querySelector<HTMLInputElement>('input[type="color"]')?.click();
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setSceneDividers((current) =>
+                  current.filter((item) => item.id !== divider.id),
+                );
+              }}
+            >
+              <span>SCENE</span>
+              <input
+                type="color"
+                value={divider.color}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) =>
+                  setSceneDividers((current) =>
+                    current.map((item) =>
+                      item.id === divider.id
+                        ? { ...item, color: e.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+            </div>
+          ))}
+        </div>
         <aside className="rail">
           <span>CUT</span>
-          {Array.from({ length: lines }, (_, i) => (
+          {Array.from({ length: lines }, (_, i) => {
+            const section = sections.find((item) => item.start === i),
+              cut = sortedCuts.find((item) => item.line === i),
+              editId = i === 0 ? "first-cut" : cut?.id;
+            return (
             <div key={i} className="rail-row">
-              {sections.find((s) => s.start === i) && (
+              {section && editId && (
+                editingCutNameId === editId ? (
+                  <input
+                    className="cut-name-input"
+                    value={cutNameDraft}
+                    autoFocus
+                    onChange={(e) => setCutNameDraft(e.target.value)}
+                    onBlur={commitCutName}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitCutName();
+                      if (e.key === "Escape") setEditingCutNameId(null);
+                    }}
+                  />
+                ) : (
                 <button
                   className={`cut-badge ${
                     sortedCuts.some(
@@ -2430,8 +2728,13 @@ export default function Home() {
                   }`}
                   title="ドラッグで移動"
                   onPointerDown={(e) => {
-                    const c = sortedCuts.find((x) => x.line === i);
-                    if (c) beginDrag(e, c.id);
+                    if (cut) beginDrag(e, cut.id);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setDragId(null);
+                    startCutNameEdit(editId, section.name);
                   }}
                   onClick={(e) => {
                     if (e.shiftKey) return;
@@ -2445,11 +2748,13 @@ export default function Home() {
                       setCuts((value) => value.filter((x) => x.id !== c.id));
                   }}
                 >
-                  {sections.find((s) => s.start === i)?.name}
+                  {section.name}
                 </button>
+                )
               )}
             </div>
-          ))}
+            );
+          })}
         </aside>
         <div className="editor-panel">
           <div className="panel-head">

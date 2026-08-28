@@ -99,27 +99,32 @@
   background: #173f52;
 }
 .workspace {
+  --scene-width: clamp(150px, 12vw, 250px);
   grid-template-columns:
-    58px minmax(0, var(--left-col)) 8px minmax(0, var(--right-col))
+    var(--scene-width) 58px minmax(0, var(--left-col)) 8px minmax(0, var(--right-col))
     80px !important;
 }
-.workspace > .rail {
+.workspace > .scene-panel {
   grid-column: 1;
 }
-.workspace > .editor-panel:not(.dialogue) {
+.workspace > .rail {
   grid-column: 2;
 }
-.workspace > .editor-panel.dialogue {
-  grid-column: 4;
-}
-.workspace > .column-divider {
+.workspace > .editor-panel:not(.dialogue):not(.scene-panel) {
   grid-column: 3;
 }
-.workspace > .cut-layer {
+.workspace > .editor-panel.dialogue {
   grid-column: 5;
+}
+.workspace > .column-divider {
+  grid-column: 4;
+}
+.workspace > .cut-layer {
+  grid-column: 6;
   grid-row: 1;
 }
 .cut-overlay {
+  left: calc(28px + var(--scene-width) + 58px) !important;
   right: 108px !important;
 }
 .normalize-inline {
@@ -544,12 +549,83 @@ body {
   height: 20px;
   font: 700 11px Georgia;
 }
+.cut-name-input {
+  box-sizing: border-box;
+  width: 48px;
+  height: 22px;
+  padding: 1px 4px;
+  border: 1px solid #b94c32;
+  border-radius: 4px;
+  outline: 2px solid #e4a698;
+  background: #fff;
+  color: #173f52;
+  font: 700 11px Georgia;
+  text-align: center;
+}
 .editor-panel {
   display: flex;
   flex-direction: column;
   min-width: 0;
   background: #fff;
   border: 1px solid var(--line);
+}
+.scene-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px 0 0 8px;
+  border-right: 0;
+}
+.scene-panel textarea {
+  position: relative;
+  z-index: 2;
+  padding-right: 10px;
+  padding-left: 10px;
+  background-color: transparent;
+}
+.scene-tints {
+  position: absolute;
+  z-index: 1;
+  top: 42px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+}
+.scene-tints i {
+  position: absolute;
+  right: 0;
+  left: 0;
+}
+.scene-divider {
+  position: absolute;
+  z-index: 6;
+  right: 3px;
+  left: 3px;
+  box-sizing: border-box;
+  height: 20px;
+  border: 1px solid #ffffffaa;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px #0003;
+  color: #fff;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.scene-divider span {
+  display: block;
+  overflow: hidden;
+  padding: 2px 7px;
+  font: 700 9px/14px Georgia;
+  letter-spacing: .12em;
+  text-shadow: 0 1px 2px #0008;
+  white-space: nowrap;
+}
+.scene-divider input[type="color"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 .editor-panel.dialogue {
   border-radius: 0 8px 8px 0;
@@ -895,8 +971,9 @@ footer {
   }
   .workspace {
     padding: 10px;
+    --scene-width: 150px;
     grid-template-columns:
-      42px minmax(250px, var(--left-col)) 8px
+      var(--scene-width) 42px minmax(250px, var(--left-col)) 8px
       minmax(250px, var(--right-col)) 55px !important;
     overflow-x: auto;
   }
