@@ -1816,23 +1816,13 @@ export default function Home() {
   const exportMovieZipWithFfmpeg = async (name: string) => {
     const { FFmpeg } = await import("@ffmpeg/ffmpeg"),
       ffmpeg = new FFmpeg(),
-      basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-    let voiceAudio: Awaited<ReturnType<typeof renderVoicevoxPcmSections>> | null =
-      null;
-    if (voicevoxStyles.length) {
-      try {
-        voiceAudio = await renderVoicevoxPcmSections();
-      } catch {
-        // If the engine was closed after connecting, movie export still
-        // remains available and intentionally falls back to video-only MP4s.
-        voiceAudio = null;
-      }
-    }
-    const zip = new JSZip(),
+      basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "",
+      { sampleRate, pcmSections } = await renderVoicevoxPcmSections(),
+      zip = new JSZip(),
       canvas = document.createElement("canvas");
     canvas.width = 1920;
     canvas.height = 1080;
-    const ctx = canvas.getContext("2d", { alpha: false })!;
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("映像用Canvasを作成できませんでした。");
     let activeCut = 0;
     ffmpeg.on("progress", ({ progress }) => {
@@ -1843,6 +1833,7 @@ export default function Home() {
     setBusy("MP4エンジンを読み込んでいます…");
     try {
       await ffmpeg.load({
+        classWorkerURL: `${basePath}/ffmpeg/ffmpeg-worker.js`,
         coreURL: `${basePath}/ffmpeg/ffmpeg-core.js`,
         wasmURL: `${basePath}/ffmpeg/ffmpeg-core.wasm`,
       });
@@ -1878,27 +1869,22 @@ export default function Home() {
           ),
         );
         await ffmpeg.writeFile(pngName, new Uint8Array(await png.arrayBuffer()));
-        if (voiceAudio)
-          await ffmpeg.writeFile(
-            wavName,
-            new Uint8Array(
-              encodePcmWav(
-                voiceAudio.pcmSections[sectionIndex] ?? new Float32Array(),
-                voiceAudio.sampleRate,
-              ),
-            ),
-          );
+        await ffmpeg.writeFile(
+          wavName,
+          new Uint8Array(
+            encodePcmWav(pcmSections[sectionIndex] ?? new Float32Array(), sampleRate),
+          ),
+        );
         const duration = (section.frames / FPS).toFixed(6),
-          inputArgs = [
+          exitCode = await ffmpeg.exec([
             "-loop",
             "1",
             "-framerate",
             String(FPS),
             "-i",
             pngName,
-            ...(voiceAudio ? ["-i", wavName] : []),
-          ],
-          outputArgs = [
+            "-i",
+            wavName,
             "-t",
             duration,
             "-c:v",
@@ -1911,14 +1897,15 @@ export default function Home() {
             "yuv420p",
             "-r",
             String(FPS),
-            ...(voiceAudio
-              ? ["-c:a", "aac", "-b:a", "128k", "-shortest"]
-              : ["-an"]),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
             "-movflags",
             "+faststart",
+            "-shortest",
             mp4Name,
-          ],
-          exitCode = await ffmpeg.exec([...inputArgs, ...outputArgs]);
+          ]);
         if (exitCode !== 0)
           throw new Error(`CUT ${cutNumber} のMP4生成に失敗しました。`);
         const movie = await ffmpeg.readFile(mp4Name);
@@ -1926,7 +1913,7 @@ export default function Home() {
         zip.file(`${cutNumber}.mp4`, movie);
         await Promise.all([
           ffmpeg.deleteFile(pngName),
-          ...(voiceAudio ? [ffmpeg.deleteFile(wavName)] : []),
+          ffmpeg.deleteFile(wavName),
           ffmpeg.deleteFile(mp4Name),
         ]);
       }
@@ -1939,10 +1926,6 @@ export default function Home() {
     }
   };
   const exportMovieZip = async (name: string) => {
-    // Use the FFmpeg path consistently so video-only export works even when
-    // VOICEVOX and WebCodecs audio APIs are unavailable.
-    return exportMovieZipWithFfmpeg(name);
-    /* c8 ignore start -- retained fast WebCodecs path for future optimization */
     if (
       typeof VideoEncoder === "undefined" ||
       typeof AudioEncoder === "undefined" ||
@@ -1982,7 +1965,7 @@ export default function Home() {
       canvas = document.createElement("canvas");
     canvas.width = 1920;
     canvas.height = 1080;
-    const ctx = canvas.getContext("2d", { alpha: false })!;
+    const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("映像用Canvasを作成できませんでした。");
     const resample = (source: Float32Array) => {
         if (sampleRate === audioSampleRate) return source;
@@ -2033,7 +2016,7 @@ export default function Home() {
           output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
           error: (error) => console.error(error),
         });
-      videoEncoder.configure(videoConfig!);
+      videoEncoder.configure(videoConfig);
       audioEncoder.configure(audioSupport.config ?? audioConfig);
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, 1920, 1080);
@@ -2087,7 +2070,6 @@ export default function Home() {
     const body = await zip.generateAsync({ type: "blob" });
     download(`${name}_mp4.zip`, body, "application/zip");
     setBusy("");
-    /* c8 ignore stop */
   };
   const openExport = (kind: ExportKind) => {
     setMenu(false);
@@ -2558,7 +2540,7 @@ export default function Home() {
             )}
             {exportKind === "movie" && (
               <p className="setting-help">
-                1920×1080・24fps・H.264のMP4をカットごとに生成し、ZIPにまとめます。VOICEVOX接続時はAAC音声付き、未接続時は音声なしで書き出します。
+                1920×1080・24fps・H.264＋AACのMP4をカットごとに生成し、ZIPにまとめます。VOICEVOXへの接続が必要です。
               </p>
             )}
             {exportKind === "xdts" && (
