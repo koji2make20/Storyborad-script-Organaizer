@@ -447,6 +447,7 @@ export default function Home() {
     ),
     sceneDisplayLines = Math.max(
       sceneLines,
+      lines,
       Math.ceil(560 / (fontSize * 1.55)),
     ),
     actionLines = action.split("\n"),
@@ -2670,7 +2671,7 @@ export default function Home() {
               <textarea
                 key={`${divider.id}-text`}
                 className="scene-section-editor"
-                wrap="soft"
+                wrap="off"
                 spellCheck={false}
                 value={divider.text}
                 style={{

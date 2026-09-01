@@ -580,6 +580,20 @@ body {
   border-radius: 8px 0 0 8px;
   border-right: 0;
 }
+.scene-panel .panel-head {
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding-right: 8px;
+  padding-left: 8px;
+  overflow: hidden;
+}
+.scene-panel .panel-head > b {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.scene-panel .panel-head > span {
+  display: none;
+}
 .scene-panel textarea {
   position: relative;
   z-index: 2;
@@ -604,8 +618,9 @@ body {
   font:
     400 var(--editor-font) / 1.55 "Yu Gothic UI",
     sans-serif;
-  white-space: pre-wrap !important;
-  overflow: auto;
+  white-space: pre !important;
+  overflow-x: auto;
+  overflow-y: auto;
   resize: none;
 }
 .scene-empty-hint {
@@ -618,9 +633,13 @@ body {
   color: #99938b;
   font-size: 11px;
   text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   pointer-events: none;
 }
 .scene-add-button {
+  flex: 0 0 auto;
   margin-left: auto;
   padding: 3px 7px;
   border: 1px solid #c9c3ba;
