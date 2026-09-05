@@ -2288,6 +2288,8 @@ export default function Home() {
         return result;
       };
     for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+      const failure: { error: Error | null } = { error: null };
       const section = sections[sectionIndex],
         cutNumber = xdtsCut(section.name),
         target = new ArrayBufferTarget(),
@@ -2308,14 +2310,25 @@ export default function Home() {
         }),
         videoEncoder = new VideoEncoder({
           output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-          error: (error) => console.error(error),
+          error: (error) => { failure.error = error; },
         }),
         audioEncoder = new AudioEncoder({
           output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-          error: (error) => console.error(error),
+          error: (error) => { failure.error = error; },
         });
-      videoEncoder.configure(videoConfig);
+      try {
+      videoEncoder.configure({ ...videoConfig, hardwareAcceleration: "prefer-software" });
       audioEncoder.configure(audioSupport.config ?? audioConfig);
+      const drainQueue = async (encoder: VideoEncoder | AudioEncoder, limit: number) => {
+        const started = performance.now();
+        while (encoder.encodeQueueSize > limit) {
+          if (failure.error) throw failure.error;
+          if (encoder.state === "closed") throw new Error("映像・音声エンコーダーが停止しました。");
+          if (performance.now() - started > 120_000) throw new Error("エンコード処理が応答しません。");
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+        }
+        if (failure.error) throw failure.error;
+      };
       for (let frameIndex = 0; frameIndex < section.frames; frameIndex++) {
         setBusy(
           `MP4映像を生成中… CUT ${cutNumber}（${sectionIndex + 1} / ${sections.length}）`,
@@ -2330,12 +2343,14 @@ export default function Home() {
           timestamp: Math.round((frameIndex / FPS) * 1_000_000),
           duration: Math.round(1_000_000 / FPS),
         });
-        videoEncoder.encode(frame, {
+        try { videoEncoder.encode(frame, {
           keyFrame: frameIndex === 0 || frameIndex % (FPS * 2) === 0,
-        });
-        frame.close();
-        if (videoEncoder.encodeQueueSize > 12) await videoEncoder.flush();
+        }); } finally { frame.close(); }
+        await drainQueue(videoEncoder, 4);
       }
+      await videoEncoder.flush();
+      if (failure.error) throw failure.error;
+      videoEncoder.close();
       const audio = resample(pcmSections[sectionIndex] ?? new Float32Array()),
         audioBlock = 1024;
       for (let offset = 0; offset < audio.length; offset += audioBlock) {
@@ -2349,15 +2364,27 @@ export default function Home() {
             timestamp: Math.round((offset / audioSampleRate) * 1_000_000),
             data,
           });
-        audioEncoder.encode(audioData);
-        audioData.close();
-        if (audioEncoder.encodeQueueSize > 24) await audioEncoder.flush();
+        try { audioEncoder.encode(audioData); } finally { audioData.close(); }
+        await drainQueue(audioEncoder, 8);
       }
-      await Promise.all([videoEncoder.flush(), audioEncoder.flush()]);
-      videoEncoder.close();
+      await audioEncoder.flush();
+      if (failure.error) throw failure.error;
       audioEncoder.close();
       muxer.finalize();
       zip.file(`${cutNumber}.mp4`, target.buffer);
+      pcmSections[sectionIndex] = new Float32Array();
+      break;
+      } catch (error) {
+        if (attempt === 1) {
+          throw new Error(`CUT ${cutNumber}（${sectionIndex + 1}/${sections.length}、${section.frames}コマ）のMP4生成に失敗しました。${failure.error?.message ?? (error instanceof Error ? error.message : String(error))}`);
+        }
+        setBusy(`CUT ${cutNumber} を再生成しています…`);
+      } finally {
+        if (videoEncoder.state !== "closed") videoEncoder.close();
+        if (audioEncoder.state !== "closed") audioEncoder.close();
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+      }
+      }
     }
     setBusy("MP4をZIPにまとめています…");
     const body = await zip.generateAsync({ type: "blob" });
