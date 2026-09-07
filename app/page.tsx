@@ -532,7 +532,7 @@ export default function Home() {
       }
       dialogueEnterRef.current = null;
     }
-    if (delta !== 0)
+    if (side === "dialogue" && delta !== 0)
       setCuts((current) => {
         const shifted = current.map((cut) =>
             cut.line > changed
@@ -557,15 +557,21 @@ export default function Home() {
         }
         return [...byLine.values()].sort((a, b) => a.line - b.line);
       });
-    const other = (side === "action" ? dialogue : action).split("\n");
-    if (delta > 0) other.splice(changed, 0, ...Array(delta).fill(""));
-    else if (delta < 0) other.splice(changed, -delta);
-    while (other.length < own.length) other.push("");
     const next = own.join("\n");
     if (side === "action") {
       setAction(next);
-      setDialogue(other.join("\n"));
     } else {
+      const other = action.split("\n");
+      if (delta > 0) other.splice(changed, 0, ...Array(delta).fill(""));
+      else if (delta < 0) {
+        // Only remove empty action rows within the deleted dialogue range.
+        // Written directions must survive even when their dialogue is deleted.
+        const end = Math.min(other.length, changed - delta);
+        for (let row = end - 1; row >= changed; row--) {
+          if (other[row].trim() === "") other.splice(row, 1);
+        }
+      }
+      while (other.length < own.length) other.push("");
       setDialogue(next);
       setAction(other.join("\n"));
     }
