@@ -191,7 +191,7 @@
 }
 .overlay-resize {
   position: absolute;
-  right: 0;
+  right: -25px;
   top: -13px;
   z-index: 3;
   width: 22px;
@@ -204,6 +204,19 @@
   font-size: 10px;
   line-height: 24px;
   cursor: ns-resize;
+  pointer-events: auto;
+}
+.duration-lock {
+  position: absolute;
+  right: 0;
+  top: -13px;
+  width: 23px;
+  height: 25px;
+  padding: 0;
+  border: 1px solid #cfc8bd;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
   pointer-events: auto;
 }
 .cut-badge.selected,

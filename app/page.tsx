@@ -12,6 +12,7 @@ type Cut = {
   trimRows?: number;
   frames?: number;
   manual?: boolean;
+  locked?: boolean;
 };
 type Section = { start: number; end: number; name: string; frames: number };
 type SceneDivider = { id: string; line: number; color: string; text: string };
@@ -264,6 +265,8 @@ export default function Home() {
     [sceneText, setSceneText] = useState(""),
     [sceneDividers, setSceneDividers] = useState<SceneDivider[]>([]),
     [cps, setCps] = useState(8),
+    [autoNormalize, setAutoNormalize] = useState(false),
+    [wavPerCut, setWavPerCut] = useState(false),
     [mode, setMode] = useState<"frames" | "seconds">("frames"),
     [firstCutName, setFirstCutName] = useState("1"),
     [cuts, setCuts] = useState<Cut[]>([
@@ -517,6 +520,8 @@ export default function Home() {
     )
       changed++;
     let caretShift = 0;
+    if (side === "dialogue" && delta > 0 && caret != null)
+      changed = Math.max(0, value.slice(0, caret).split("\n").length - 1 - delta);
     if (side === "dialogue" && delta > 0) {
       const enter = dialogueEnterRef.current,
         targetRow = value.slice(0, caret ?? 0).split("\n").length - 1;
@@ -709,6 +714,9 @@ export default function Home() {
   const addCut = (line: number) =>
     setCuts((v) => {
       if (v.some((c) => c.line === line)) return v;
+      if (autoNormalize) return [...v, { id: crypto.randomUUID(), name: "", line, trimRows: 0 }]
+        .sort((a, b) => a.line - b.line)
+        .map((cut, index) => ({ ...cut, name: String(index + 2) }));
       const ordered = [...v].sort((a, b) => a.line - b.line),
         insert = ordered.filter((c) => c.line < line).length,
         prevName = insert === 0 ? "1" : ordered[insert - 1].name;
@@ -746,7 +754,7 @@ export default function Home() {
           if (!ids.has(c.id)) return c;
           const start = dragStartLines.current.get(c.id) ?? c.line,
             next = Math.max(1, Math.min(lines - 1, start + delta));
-          return occupied.has(next) ? c : { ...c, line: next, manual: false };
+          return occupied.has(next) ? c : { ...c, line: next, manual: c.locked ? true : false };
         })
         .sort((a, b) => a.line - b.line);
     });
@@ -2073,8 +2081,20 @@ export default function Home() {
     }
   };
   const exportVoicevoxWav = async (name: string) => {
-    const { sampleRate, pcmSections, subtitleSections } = await renderVoicevoxPcmSections(),
-      output = new Float32Array(
+    const { sampleRate, pcmSections } = await renderVoicevoxPcmSections();
+    if (wavPerCut) {
+      const zip = new JSZip(), used = new Set<string>();
+      pcmSections.forEach((samples, index) => {
+        const base = xdtsCut(sections[index].name);
+        let filename = `${base}.wav`, suffix = 2;
+        while (used.has(filename)) filename = `${base}_${suffix++}.wav`;
+        used.add(filename);
+        zip.file(filename, encodePcmWav(samples, sampleRate));
+      });
+      download(`${name}_wav.zip`, await zip.generateAsync({ type: "blob" }), "application/zip");
+      return;
+    }
+    const output = new Float32Array(
         pcmSections.reduce((sum, samples) => sum + samples.length, 0),
       );
     let position = 0;
@@ -2574,9 +2594,13 @@ export default function Home() {
         <div className="summary">
           <strong>{sections.length}</strong>
           <span>カット</span>
-          <button className="normalize-inline" onClick={normalize}>
+          <label className="normalize-inline">
+            <input type="checkbox" checked={autoNormalize} onChange={(e) => {
+              setAutoNormalize(e.target.checked);
+              if (e.target.checked) normalize();
+            }} />
             番号を正規化
-          </button>
+          </label>
           <i />
           <strong>
             {mode === "frames" ? plus(total) : `${(total / FPS).toFixed(2)}秒`}
@@ -2816,14 +2840,15 @@ export default function Home() {
                 <button
                   className={`cut-badge ${
                     sortedCuts.some(
-                      (item) => item.line === i && selectedCutIds.has(item.id),
+                      (item) => item.line === section.end && selectedCutIds.has(item.id),
                     )
                       ? "selected"
                       : ""
                   }`}
                   title="ドラッグで移動"
                   onPointerDown={(e) => {
-                    if (cut) beginDrag(e, cut.id);
+                    const endingCut = sortedCuts.find((item) => item.line === section.end);
+                    if (endingCut) beginDrag(e, endingCut.id);
                   }}
                   onDoubleClick={(e) => {
                     e.preventDefault();
@@ -2833,7 +2858,7 @@ export default function Home() {
                   }}
                   onClick={(e) => {
                     if (e.shiftKey) return;
-                    const c = sortedCuts.find((x) => x.line === i);
+                    const c = sortedCuts.find((x) => x.line === section.end);
                     if (c) setSelectedCutIds(new Set([c.id]));
                   }}
                   onContextMenu={(e) => {
@@ -2995,6 +3020,18 @@ export default function Home() {
                 >
                   ▼
                 </button>
+                <button
+                  className="duration-lock"
+                  aria-label={cut.locked ? "尺のロックを解除" : "尺をロック"}
+                  title={cut.locked ? "尺のロックを解除" : "尺をロック（移動しても尺を維持）"}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCuts((current) => current.map((item) => item.id === cut.id
+                      ? { ...item, locked: !item.locked, manual: !item.locked, frames: section?.frames ?? 0 }
+                      : item));
+                  }}
+                >{cut.locked ? "🔒" : "🔓"}</button>
               </div>
             </div>
           );
@@ -3050,9 +3087,15 @@ export default function Home() {
               />
             </label>
             {exportKind === "wav" && (
+              <div>
+              <label className="check">
+                <input type="checkbox" checked={wavPerCut} onChange={(e) => setWavPerCut(e.target.checked)} />
+                カット別に出力する
+              </label>
               <p className="setting-help">
-                再生設定で接続したVOICEVOXと話者スタイルを使用し、改行の間を含む一本のWAVを書き出します。
+                {wavPerCut ? "各カットの尺に合わせたWAVをZIPにまとめます。" : "改行の間を含む一本のWAVを書き出します。"}
               </p>
+              </div>
             )}
             {exportKind === "movie" && (
               <div className="story-settings">
