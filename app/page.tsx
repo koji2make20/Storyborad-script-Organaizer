@@ -346,6 +346,7 @@ export default function Home() {
       null,
     ),
     dragAnchorLine = useRef(0),
+    dragPointerAnchor = useRef({ y: 0, scrollTop: 0 }),
     dragStartLines = useRef<Map<string, number>>(new Map());
   useLayoutEffect(() => {
     const pending = pendingSelectionRef.current;
@@ -749,14 +750,15 @@ export default function Home() {
       const ids = selectedCutIds.has(id) ? selectedCutIds : new Set([id]),
         delta = line - dragAnchorLine.current,
         occupied = new Set(v.filter((c) => !ids.has(c.id)).map((c) => c.line));
-      return v
+      const updated = v
         .map((c) => {
           if (!ids.has(c.id)) return c;
           const start = dragStartLines.current.get(c.id) ?? c.line,
             next = Math.max(1, Math.min(lines - 1, start + delta));
-          return occupied.has(next) ? c : { ...c, line: next, manual: c.locked ? true : false };
+          return occupied.has(next) || next === c.line ? c : { ...c, line: next, manual: c.locked ? true : false };
         })
         .sort((a, b) => a.line - b.line);
+      return updated.every((cut, index) => cut === v[index]) ? v : updated;
     });
   const dragMove = (e: React.PointerEvent) => {
     if ((!dragId && !resizeId) || !cutLayerRef.current) return;
@@ -768,7 +770,11 @@ export default function Home() {
           Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
         ),
       );
-    if (dragId) moveCuts(dragId, row);
+    if (dragId) {
+      const distance = e.clientY - dragPointerAnchor.current.y +
+        (workspaceRef.current?.scrollTop ?? 0) - dragPointerAnchor.current.scrollTop;
+      moveCuts(dragId, dragAnchorLine.current + Math.round(distance / (fontSize * 1.55)));
+    }
     if (resizeId)
       setCuts((v) =>
         v.map((c) =>
@@ -1004,6 +1010,10 @@ export default function Home() {
   };
   const beginDrag = (e: React.PointerEvent, id: string) => {
     e.preventDefault();
+    dragPointerAnchor.current = {
+      y: e.clientY,
+      scrollTop: workspaceRef.current?.scrollTop ?? 0,
+    };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const next = new Set(selectedCutIds);
     if (e.shiftKey) {
@@ -3021,7 +3031,8 @@ export default function Home() {
                   ▼
                 </button>
                 <button
-                  className="duration-lock"
+                  className={`duration-lock${cut.locked ? " is-locked" : ""}`}
+                  aria-pressed={Boolean(cut.locked)}
                   aria-label={cut.locked ? "尺のロックを解除" : "尺をロック"}
                   title={cut.locked ? "尺のロックを解除" : "尺をロック（移動しても尺を維持）"}
                   onPointerDown={(e) => e.stopPropagation()}
@@ -3031,7 +3042,13 @@ export default function Home() {
                       ? { ...item, locked: !item.locked, manual: !item.locked, frames: section?.frames ?? 0 }
                       : item));
                   }}
-                >{cut.locked ? "🔒" : "🔓"}</button>
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="5" y="10" width="14" height="11" rx="2" />
+                    <path d={cut.locked ? "M8 10V7a4 4 0 0 1 8 0v3" : "M8 10V7a4 4 0 0 1 7.5-2"} />
+                    <path d="M12 14v3" />
+                  </svg>
+                </button>
               </div>
             </div>
           );

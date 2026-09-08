@@ -213,11 +213,24 @@
   width: 23px;
   height: 25px;
   padding: 0;
-  border: 1px solid #cfc8bd;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d4cdc3;
   border-radius: 4px;
-  background: #fff;
+  background: #f8f6f2;
+  color: #8a8177;
   cursor: pointer;
   pointer-events: auto;
+}
+.duration-lock:hover,
+.duration-lock.is-locked {
+  color: #9b3925;
+  border-color: #b94c32;
+  background: #f5e6df;
+}
+.duration-lock:focus-visible {
+  outline: 2px solid #173f52;
+  outline-offset: 2px;
 }
 .cut-badge.selected,
 .cut-overlay.selected .duration-handle {
@@ -501,6 +514,21 @@ body {
 .controlbar input {
   width: 90px;
   accent-color: var(--accent);
+}
+.controlbar .normalize-inline {
+  flex: 0 0 auto;
+  gap: 4px;
+  margin-left: 3px;
+  padding: 3px 5px;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.controlbar .normalize-inline input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  flex: 0 0 12px;
 }
 .summary {
   display: flex;
