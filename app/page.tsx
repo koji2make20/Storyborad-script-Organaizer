@@ -1168,7 +1168,7 @@ export default function Home() {
         setDialogue(
           (p.dialogue ?? "").replaceAll("［", "[").replaceAll("］", "]"),
         );
-        setCps(Number(p.chars_per_sec ?? 8));
+        setCps(Math.max(4, Math.min(16, Number(p.chars_per_sec ?? 8))));
         setFontSize(Number(p.font_size ?? 15));
         setMode(Number(p.mode) === 1 ? "seconds" : "frames");
         setFirstCutName(String(p.first_cut_name ?? p.cut_names?.[0] ?? "1"));
@@ -2631,8 +2631,8 @@ export default function Home() {
           発話速度（24f／音）
           <input
             type="range"
-            min="1"
-            max="24"
+            min="1.5"
+            max="6"
             step=".1"
             value={(FPS / cps).toFixed(1)}
             onChange={(e) => setCps(FPS / Number(e.target.value))}
