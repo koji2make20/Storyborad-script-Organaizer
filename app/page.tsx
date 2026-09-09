@@ -3488,6 +3488,13 @@ export default function Home() {
             <p className="setting-help">
               再生はセリフ欄のカーソル位置から始まり、話者名は読み上げません。VOICEVOXを使う場合は、VOICEVOXを起動してから接続確認を押してください。
             </p>
+            <p className="setting-help">
+              音声合成：<a href="https://voicevox.hiroshiba.jp/" target="_blank" rel="noopener noreferrer">VOICEVOX</a><br />
+              生成音声を公開する場合は、使用した音声ライブラリの利用規約に従ってください。
+              公開作品にも必要なクレジット（例：VOICEVOX:キャラクター名）を表示してください。
+              <br /><a href="https://voicevox.hiroshiba.jp/term/" target="_blank" rel="noopener noreferrer">VOICEVOX利用規約</a>
+              {" · "}<a href={`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/THIRD_PARTY_LICENSES.md`} target="_blank" rel="noopener noreferrer">第三者ライセンス</a>
+            </p>
             <div className="dialog-actions">
               <button
                 className="confirm"
