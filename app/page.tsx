@@ -2628,17 +2628,20 @@ export default function Home() {
           </select>
         </label>
         <label>
-          発話速度
+          発話速度（24f／音）
           <input
             type="range"
             min="1"
-            max="12"
+            max="24"
             step=".1"
-            value={cps}
-            onChange={(e) => setCps(+e.target.value)}
+            value={(FPS / cps).toFixed(1)}
+            onChange={(e) => setCps(FPS / Number(e.target.value))}
           />
-          <b>{cps.toFixed(1)}</b>
-          <span>音/秒</span>
+          <b>
+            {Math.floor(FPS / cps / FPS)}+
+            {((FPS / cps) % FPS).toFixed(1)}
+          </b>
+          <span>秒＋コマ／音</span>
         </label>
         <button className="speech-button" onClick={toggleSpeech}>
           {speaking ? "■ 音声停止" : "▶ セリフ再生"}
