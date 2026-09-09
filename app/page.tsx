@@ -2630,10 +2630,11 @@ export default function Home() {
         <label>
           発話速度（24f／音）
           <input
+            className="speech-speed-slider"
             type="range"
             min="1.5"
             max="6"
-            step=".1"
+            step="0.1"
             value={(FPS / cps).toFixed(1)}
             onChange={(e) => setCps(FPS / Number(e.target.value))}
           />
