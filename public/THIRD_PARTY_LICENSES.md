@@ -15,7 +15,11 @@
 
 JSZipはMITを選択して利用します。PDF.jsのApache-2.0はPDF.jsについて保持する第三者ライセンスであり、本アプリ全体のライセンス指定ではありません。
 
-FFmpegはWebCodecs非対応端末のMP4代替処理で使用中です。public/ffmpeg内のコア・WASMを配布しています。依存を削除した状態ではなく、GPL関連の配布要件が解消されたという扱いにはしていません。コアの配布に関する対応ソース・ビルド条件等の確認は別途必要です。
+## FFmpegの使用について
+
+本アプリはFFmpegを使用しています。WebCodecsに対応していない環境でMP4を書き出すための代替処理としてFFmpegを実行し、`public/ffmpeg`内のFFmpegコアおよびWASMファイルを本アプリとともに配布しています。
+
+FFmpeg関連の依存パッケージと配布ファイルは削除していません。以下に各パッケージのライセンス情報を記載します。なお、本記載だけでGPLに関するすべての配布要件への対応を表明するものではなく、対応するソースコードの提供方法やビルド条件などは別途確認が必要です。
 
 ## @ffmpeg/core 0.12.10
 
@@ -1073,5 +1077,4 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
 
