@@ -267,7 +267,7 @@ export default function Home() {
     [cps, setCps] = useState(8),
     [autoNormalize, setAutoNormalize] = useState(false),
     [wavPerCut, setWavPerCut] = useState(false),
-    [mode, setMode] = useState<"frames" | "seconds">("frames"),
+    [mode, setMode] = useState<"frames" | "frameCount" | "seconds">("frames"),
     [firstCutName, setFirstCutName] = useState("1"),
     [cuts, setCuts] = useState<Cut[]>([
       { id: "cut-1", name: "2", line: 5, trimRows: 0 },
@@ -1170,7 +1170,13 @@ export default function Home() {
         );
         setCps(Math.max(4, Math.min(16, Number(p.chars_per_sec ?? 8))));
         setFontSize(Number(p.font_size ?? 15));
-        setMode(Number(p.mode) === 1 ? "seconds" : "frames");
+        setMode(
+          Number(p.mode) === 1
+            ? "seconds"
+            : Number(p.mode) === 2
+              ? "frameCount"
+              : "frames",
+        );
         setFirstCutName(String(p.first_cut_name ?? p.cut_names?.[0] ?? "1"));
         setSceneText(String(p.scene_text ?? ""));
         setSceneDividers(
@@ -1390,7 +1396,7 @@ export default function Home() {
       {
         version: 48,
         chars_per_sec: cps,
-        mode: mode === "frames" ? 0 : 1,
+        mode: mode === "frames" ? 0 : mode === "seconds" ? 1 : 2,
         font_size: fontSize,
         action,
         dialogue,
@@ -2613,7 +2619,11 @@ export default function Home() {
           </label>
           <i />
           <strong>
-            {mode === "frames" ? plus(total) : `${(total / FPS).toFixed(2)}秒`}
+            {mode === "frames"
+              ? plus(total)
+              : mode === "frameCount"
+                ? `${total}コマ`
+                : `${(total / FPS).toFixed(2)}秒`}
           </strong>
           <span>総尺 · {runtime(total)}</span>
         </div>
@@ -2621,9 +2631,12 @@ export default function Home() {
           尺表示
           <select
             value={mode}
-            onChange={(e) => setMode(e.target.value as "frames" | "seconds")}
+            onChange={(e) =>
+              setMode(e.target.value as "frames" | "frameCount" | "seconds")
+            }
           >
             <option value="frames">24f 秒＋コマ</option>
+            <option value="frameCount">24f コマのみ</option>
             <option value="seconds">秒</option>
           </select>
         </label>
@@ -3024,7 +3037,9 @@ export default function Home() {
                   >
                     {mode === "frames"
                       ? plus(section?.frames ?? 0)
-                      : `${((section?.frames ?? 0) / FPS).toFixed(2)}秒`}
+                      : mode === "frameCount"
+                        ? `${section?.frames ?? 0}コマ`
+                        : `${((section?.frames ?? 0) / FPS).toFixed(2)}秒`}
                   </button>
                 )}
                 <button
@@ -3070,7 +3085,9 @@ export default function Home() {
               最終{" "}
               {mode === "frames"
                 ? plus(sections.at(-1)?.frames ?? 0)
-                : `${((sections.at(-1)?.frames ?? 0) / FPS).toFixed(2)}秒`}
+                : mode === "frameCount"
+                  ? `${sections.at(-1)?.frames ?? 0}コマ`
+                  : `${((sections.at(-1)?.frames ?? 0) / FPS).toFixed(2)}秒`}
             </span>
           </div>
         </div>
