@@ -496,6 +496,24 @@ export default function Home() {
     });
   }, [sortedCuts, lines, dialogue, cps, firstCutName]);
   const total = sections.reduce((n, s) => n + s.frames, 0);
+  const formatDisplayedDuration = (frames: number) =>
+    mode === "frames"
+      ? plus(frames)
+      : mode === "frameCount"
+        ? `${frames}コマ`
+        : `${(frames / FPS).toFixed(2)}秒`;
+  const sceneDuration = (start: number, end: number) =>
+    Math.round(
+      sections.reduce((sum, section) => {
+        const overlap = Math.max(
+          0,
+          Math.min(end, section.end) - Math.max(start, section.start),
+        );
+        if (!overlap) return sum;
+        const sectionRows = Math.max(1, section.end - section.start);
+        return sum + section.frames * (overlap / sectionRows);
+      }, 0),
+    );
   const speakers = useMemo(() => {
     const list: string[] = [];
     dialogueLines.forEach((l) => {
@@ -2619,11 +2637,7 @@ export default function Home() {
           </label>
           <i />
           <strong>
-            {mode === "frames"
-              ? plus(total)
-              : mode === "frameCount"
-                ? `${total}コマ`
-                : `${(total / FPS).toFixed(2)}秒`}
+            {formatDisplayedDuration(total)}
           </strong>
           <span>総尺 · {runtime(total)}</span>
         </div>
@@ -2774,28 +2788,33 @@ export default function Home() {
               />
             );
           })}
-          {sceneDividers.map((divider) => (
-            <div
-              key={divider.id}
-              role="button"
-              tabIndex={0}
-              className="scene-divider"
-              title="ドラッグで移動・右クリックで色変更"
-              style={{
-                top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55)`,
-                backgroundColor: divider.color,
-              }}
-              onPointerDown={(e) => beginSceneDrag(e, divider.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setSceneDragId(null);
-                e.currentTarget
-                  .querySelector<HTMLInputElement>('input[type="color"]')
-                  ?.click();
-              }}
-            >
-              <span>SCENE</span>
+          {sceneDividers.map((divider, index) => {
+            const nextLine = sceneDividers[index + 1]?.line ?? sceneDisplayLines;
+            return (
+              <div
+                key={divider.id}
+                role="button"
+                tabIndex={0}
+                className="scene-divider"
+                title="ドラッグで移動・右クリックで色変更"
+                style={{
+                  top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55)`,
+                  backgroundColor: divider.color,
+                }}
+                onPointerDown={(e) => beginSceneDrag(e, divider.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSceneDragId(null);
+                  e.currentTarget
+                    .querySelector<HTMLInputElement>('input[type="color"]')
+                    ?.click();
+                }}
+              >
+              <span className="scene-label">SCENE</span>
+              <span className="scene-duration">
+                {formatDisplayedDuration(sceneDuration(divider.line, nextLine))}
+              </span>
               <button
                 type="button"
                 className="scene-delete-button"
@@ -2827,8 +2846,9 @@ export default function Home() {
                   )
                 }
               />
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
         <div
           className="scene-column-divider"
@@ -3035,11 +3055,7 @@ export default function Home() {
                       startDurationEdit(cut, section?.frames ?? 0);
                     }}
                   >
-                    {mode === "frames"
-                      ? plus(section?.frames ?? 0)
-                      : mode === "frameCount"
-                        ? `${section?.frames ?? 0}コマ`
-                        : `${((section?.frames ?? 0) / FPS).toFixed(2)}秒`}
+                    {formatDisplayedDuration(section?.frames ?? 0)}
                   </button>
                 )}
                 <button
@@ -3083,11 +3099,7 @@ export default function Home() {
           <div className="cut-overlay-controls">
             <span className="duration-handle final-duration">
               最終{" "}
-              {mode === "frames"
-                ? plus(sections.at(-1)?.frames ?? 0)
-                : mode === "frameCount"
-                  ? `${sections.at(-1)?.frames ?? 0}コマ`
-                  : `${((sections.at(-1)?.frames ?? 0) / FPS).toFixed(2)}秒`}
+              {formatDisplayedDuration(sections.at(-1)?.frames ?? 0)}
             </span>
           </div>
         </div>
