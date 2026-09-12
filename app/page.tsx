@@ -16,6 +16,7 @@ type Cut = {
 };
 type Section = { start: number; end: number; name: string; frames: number };
 type SceneDivider = { id: string; line: number; color: string; text: string };
+type StructureView = "scene" | "part" | "both";
 type VoicevoxStyle = { id: number; name: string; speaker: string };
 type HistorySnapshot = {
   action: string;
@@ -24,6 +25,7 @@ type HistorySnapshot = {
   firstCutName: string;
   cuts: Cut[];
   sceneDividers: SceneDivider[];
+  partDividers: SceneDivider[];
   focusSide: "scene" | "action" | "dialogue" | null;
   selectionStart: number;
   selectionEnd: number;
@@ -39,6 +41,7 @@ type ExportKind =
   | "voicevox"
   | "wav"
   | "movie"
+  | "spreadsheet"
   | null;
 const FPS = 24;
 const colors = [
@@ -104,6 +107,119 @@ const runtime = (f: number) => {
 };
 const safe = (s: string) =>
   s.replace(/[\\/:*?"<>|]/g, "_").slice(0, 70) || "dialogue";
+type SpreadsheetCell = string | number;
+type SpreadsheetSheet = {
+  name: string;
+  rows: SpreadsheetCell[][];
+  widths: number[];
+};
+const xmlEscape = (value: string) =>
+  value
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+const spreadsheetColumn = (index: number) => {
+  let value = index + 1,
+    label = "";
+  while (value > 0) {
+    value--;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+  return label;
+};
+const worksheetXml = (rows: SpreadsheetCell[][], widths: number[]) => {
+  const rowCount = Math.max(1, rows.length),
+    columnCount = Math.max(1, rows[0]?.length ?? widths.length),
+    lastCell = `${spreadsheetColumn(columnCount - 1)}${rowCount}`,
+    columns = widths
+      .map(
+        (width, index) =>
+          `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`,
+      )
+      .join(""),
+    body = rows
+      .map((row, rowIndex) => {
+        const cells = row
+          .map((value, columnIndex) => {
+            const reference = `${spreadsheetColumn(columnIndex)}${rowIndex + 1}`,
+              style = rowIndex === 0 ? 1 : 2;
+            return typeof value === "number"
+              ? `<c r="${reference}" s="${style}"><v>${value}</v></c>`
+              : `<c r="${reference}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
+          })
+          .join("");
+        return `<row r="${rowIndex + 1}"${rowIndex ? ' ht="30" customHeight="1"' : ' ht="24" customHeight="1"'}>${cells}</row>`;
+      })
+      .join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:${lastCell}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${columns}</cols><sheetData>${body}</sheetData><autoFilter ref="A1:${lastCell}"/><pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.2" footer="0.2"/></worksheet>`;
+};
+const createSpreadsheetWorkbook = async (sheets: SpreadsheetSheet[]) => {
+  const zip = new JSZip(),
+    sheetOverrides = sheets
+      .map(
+        (_, index) =>
+          `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`,
+      )
+      .join(""),
+    workbookSheets = sheets
+      .map(
+        (sheet, index) =>
+          `<sheet name="${xmlEscape(sheet.name)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`,
+      )
+      .join(""),
+    workbookRels = sheets
+      .map(
+        (_, index) =>
+          `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`,
+      )
+      .join("");
+  zip.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>${sheetOverrides}</Types>`,
+  );
+  zip.file(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`,
+  );
+  zip.file(
+    "xl/workbook.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${workbookSheets}</sheets></workbook>`,
+  );
+  zip.file(
+    "xl/_rels/workbook.xml.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${workbookRels}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+  );
+  zip.file(
+    "xl/styles.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="10"/><name val="Aptos"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="10"/><name val="Aptos"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF173F52"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border/><border><bottom style="thin"><color rgb="FFD8D4CC"/></bottom></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`,
+  );
+  zip.file(
+    "docProps/core.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Storyboard Script Organizer</dc:creator><dc:title>台本スプレッドシート</dc:title></cp:coreProperties>`,
+  );
+  zip.file(
+    "docProps/app.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Storyboard Script Organizer</Application></Properties>`,
+  );
+  sheets.forEach((sheet, index) =>
+    zip.file(
+      `xl/worksheets/sheet${index + 1}.xml`,
+      worksheetXml(sheet.rows, sheet.widths),
+    ),
+  );
+  return zip.generateAsync({
+    type: "blob",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+};
+const csvCell = (value: SpreadsheetCell) =>
+  `"${String(value).replaceAll('"', '""')}"`;
 const xdtsCut = (name: string) => {
   const m = String(name).match(/^(\d+)(.*)$/);
   return m ? `${m[1].padStart(3, "0")}${m[2]}` : safe(name);
@@ -264,6 +380,8 @@ export default function Home() {
     [dialogue, setDialogue] = useState(sampleD),
     [sceneText, setSceneText] = useState(""),
     [sceneDividers, setSceneDividers] = useState<SceneDivider[]>([]),
+    [partDividers, setPartDividers] = useState<SceneDivider[]>([]),
+    [structureView, setStructureView] = useState<StructureView>("both"),
     [cps, setCps] = useState(8),
     [autoNormalize, setAutoNormalize] = useState(false),
     [wavPerCut, setWavPerCut] = useState(false),
@@ -298,6 +416,7 @@ export default function Home() {
     [editingCutNameId, setEditingCutNameId] = useState<string | null>(null),
     [cutNameDraft, setCutNameDraft] = useState(""),
     [sceneDragId, setSceneDragId] = useState<string | null>(null),
+    [partDragId, setPartDragId] = useState<string | null>(null),
     [sceneWidth, setSceneWidth] = useState(190),
     [sceneWidthDragging, setSceneWidthDragging] = useState(false),
     [splitDragging, setSplitDragging] = useState(false),
@@ -315,14 +434,19 @@ export default function Home() {
     [voicevoxStyles, setVoicevoxStyles] = useState<VoicevoxStyle[]>([]),
     [voicevoxSpeakerStyles, setVoicevoxSpeakerStyles] = useState<
       Record<string, number>
-    >({});
+    >({}),
+    [spreadsheetFormat, setSpreadsheetFormat] = useState<"xlsx" | "csv">(
+      "xlsx",
+    );
   const fileRef = useRef<HTMLInputElement>(null),
     cutLayerRef = useRef<HTMLDivElement>(null),
     workspaceRef = useRef<HTMLElement>(null),
     actionRef = useRef<HTMLTextAreaElement>(null),
     dialogueRef = useRef<HTMLTextAreaElement>(null),
     sceneRef = useRef<HTMLTextAreaElement>(null),
+    structurePanelsRef = useRef<HTMLDivElement>(null),
     scenePanelRef = useRef<HTMLDivElement>(null),
+    partPanelRef = useRef<HTMLDivElement>(null),
     dialogueEnterRef = useRef<{
       speaker: string;
       inherit: boolean;
@@ -397,6 +521,7 @@ export default function Home() {
         firstCutName,
         cuts: cuts.map((cut) => ({ ...cut })),
         sceneDividers: sceneDividers.map((divider) => ({ ...divider })),
+        partDividers: partDividers.map((divider) => ({ ...divider })),
         focusSide,
         selectionStart: focusTarget?.selectionStart ?? 0,
         selectionEnd: focusTarget?.selectionEnd ?? 0,
@@ -412,7 +537,8 @@ export default function Home() {
       current.sceneText === sceneText &&
       current.firstCutName === firstCutName &&
       JSON.stringify(current.cuts) === JSON.stringify(cuts) &&
-      JSON.stringify(current.sceneDividers) === JSON.stringify(sceneDividers)
+      JSON.stringify(current.sceneDividers) === JSON.stringify(sceneDividers) &&
+      JSON.stringify(current.partDividers) === JSON.stringify(partDividers)
     )
       return;
     const kind: "text" | "cuts" =
@@ -438,7 +564,7 @@ export default function Home() {
       historyIndexRef.current = next.length - 1;
     }
     historyGroupRef.current = { kind, at: now };
-  }, [action, dialogue, sceneText, firstCutName, cuts, sceneDividers]);
+  }, [action, dialogue, sceneText, firstCutName, cuts, sceneDividers, partDividers]);
   const lines = Math.max(
       action.split("\n").length,
       dialogue.split("\n").length,
@@ -449,8 +575,13 @@ export default function Home() {
       ...sceneDividers.map((divider) => divider.line + 2),
       1,
     ),
+    partLines = Math.max(
+      ...partDividers.map((divider) => divider.line + 2),
+      1,
+    ),
     sceneDisplayLines = Math.max(
       sceneLines,
+      partLines,
       lines,
       Math.ceil(560 / (fontSize * 1.55)),
     ),
@@ -514,6 +645,96 @@ export default function Home() {
         return sum + section.frames * (overlap / sectionRows);
       }, 0),
     );
+  const structureTextAt = (dividers: SceneDivider[], line: number) => {
+    const divider = [...dividers]
+      .reverse()
+      .find((item) => item.line <= line);
+    return divider?.text.trim() ?? "";
+  };
+  const spreadsheetSheets = (): SpreadsheetSheet[] => {
+    const cutRows: SpreadsheetCell[][] = [
+      ["シーン", "パート", "Cut", "画像用空欄", "ト書き", "セリフ", "尺", "備考"],
+      ...sections.map((section) => [
+        structureTextAt(sceneDividers, section.start),
+        structureTextAt(partDividers, section.start),
+        section.name,
+        "",
+        actionLines.slice(section.start, section.end).join("\n").trim(),
+        dialogueLines.slice(section.start, section.end).join("\n").trim(),
+        plus(section.frames),
+        "",
+      ]),
+    ];
+    const dialogueData: SpreadsheetCell[][] = [];
+    sections.forEach((section) => {
+      dialogueLines.slice(section.start, section.end).forEach((line) => {
+        const parsed = parseDialogue(line);
+        if (!parsed || !parsed.body) return;
+        dialogueData.push([
+          parsed.speaker,
+          section.name,
+          structureTextAt(sceneDividers, section.start),
+          structureTextAt(partDividers, section.start),
+          parsed.body,
+          plus(readingFrames(parsed.body, cps)),
+        ]);
+      });
+    });
+    dialogueData.sort((a, b) =>
+      String(a[0]).localeCompare(String(b[0]), "ja"),
+    );
+    const dialogueRows: SpreadsheetCell[][] = [
+      ["キャラクター", "Cut", "シーン", "パート", "セリフ", "尺"],
+      ...dialogueData,
+    ];
+    const sceneRows: SpreadsheetCell[][] = [
+      ["シーン", "パート", "開始Cut", "終了Cut", "カット数", "尺"],
+    ];
+    sceneDividers.forEach((divider, index) => {
+      const end = sceneDividers[index + 1]?.line ?? lines,
+        included = sections.filter(
+          (section) => section.start < end && section.end > divider.line,
+        );
+      sceneRows.push([
+        divider.text.trim(),
+        structureTextAt(partDividers, divider.line),
+        included[0]?.name ?? "",
+        included.at(-1)?.name ?? "",
+        included.length,
+        plus(sceneDuration(divider.line, end)),
+      ]);
+    });
+    return [
+      {
+        name: "カット一覧",
+        rows: cutRows,
+        widths: [20, 20, 10, 16, 42, 42, 12, 24],
+      },
+      {
+        name: "キャラクター別セリフ",
+        rows: dialogueRows,
+        widths: [18, 10, 20, 20, 52, 12],
+      },
+      {
+        name: "シーン別集計",
+        rows: sceneRows,
+        widths: [28, 22, 12, 12, 12, 12],
+      },
+    ];
+  };
+  const exportSpreadsheet = async (name: string) => {
+    const sheets = spreadsheetSheets();
+    if (spreadsheetFormat === "csv") {
+      const csv = sheets[0].rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+      download(`${name}.csv`, `\ufeff${csv}`, "text/csv;charset=utf-8");
+      return;
+    }
+    download(
+      `${name}.xlsx`,
+      await createSpreadsheetWorkbook(sheets),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+  };
   const speakers = useMemo(() => {
     const list: string[] = [];
     dialogueLines.forEach((l) => {
@@ -699,6 +920,9 @@ export default function Home() {
     setSceneDividers(
       (snapshot.sceneDividers ?? []).map((divider) => ({ ...divider })),
     );
+    setPartDividers(
+      (snapshot.partDividers ?? []).map((divider) => ({ ...divider })),
+    );
     if (snapshot.focusSide) {
       const target =
         snapshot.focusSide === "scene"
@@ -803,7 +1027,7 @@ export default function Home() {
   const resizeColumns = (e: React.PointerEvent) => {
     if (!splitDragging || !workspaceRef.current) return;
     const panels = workspaceRef.current.querySelectorAll<HTMLElement>(
-        ".editor-panel",
+        ".editor-panel:not(.scene-panel)",
       ),
       actionRect = panels[0]?.getBoundingClientRect(),
       dialogueRect = panels[1]?.getBoundingClientRect();
@@ -813,9 +1037,12 @@ export default function Home() {
     setSplit(Math.max(25, Math.min(75, (left / usable) * 100)));
   };
   const resizeSceneColumn = (e: React.PointerEvent) => {
-    if (!sceneWidthDragging || !scenePanelRef.current) return;
-    const rect = scenePanelRef.current.getBoundingClientRect();
-    setSceneWidth(Math.max(120, Math.min(520, e.clientX - rect.left)));
+    if (!sceneWidthDragging || !structurePanelsRef.current) return;
+    const rect = structurePanelsRef.current.getBoundingClientRect(),
+      panelCount = structureView === "both" ? 2 : 1;
+    setSceneWidth(
+      Math.max(120, Math.min(520, (e.clientX - rect.left) / panelCount)),
+    );
   };
   const stopVoicevoxAudio = () => {
     voicevoxAudioRef.current?.pause();
@@ -1060,6 +1287,15 @@ export default function Home() {
             { id: crypto.randomUUID(), line, color: "#8b8b8b", text: "" },
           ].sort((a, b) => a.line - b.line),
     );
+  const addPartDivider = (line: number) =>
+    setPartDividers((current) =>
+      current.some((divider) => divider.line === line)
+        ? current
+        : [
+            ...current,
+            { id: crypto.randomUUID(), line, color: "#596f86", text: "" },
+          ].sort((a, b) => a.line - b.line),
+    );
   const beginSceneDrag = (e: React.PointerEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1086,6 +1322,30 @@ export default function Home() {
       return current
         .map((divider) =>
           divider.id === sceneDragId ? { ...divider, line: row } : divider,
+        )
+        .sort((a, b) => a.line - b.line);
+    });
+  };
+  const movePartDivider = (e: React.PointerEvent) => {
+    if (!partDragId || !partPanelRef.current) return;
+    const rect = partPanelRef.current.getBoundingClientRect(),
+      maxRow = Math.max(
+        sceneDisplayLines - 1,
+        Math.floor((rect.height - 42) / (fontSize * 1.55)) - 1,
+      ),
+      row = Math.max(
+        0,
+        Math.min(
+          maxRow,
+          Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
+        ),
+      );
+    setPartDividers((current) => {
+      if (current.some((divider) => divider.id !== partDragId && divider.line === row))
+        return current;
+      return current
+        .map((divider) =>
+          divider.id === partDragId ? { ...divider, line: row } : divider,
         )
         .sort((a, b) => a.line - b.line);
     });
@@ -1213,6 +1473,24 @@ export default function Home() {
                 }))
             : [],
         );
+        setPartDividers(
+          Array.isArray(p.part_dividers)
+            ? p.part_dividers
+                .map((divider: Partial<SceneDivider>) => ({
+                  id: divider.id ?? crypto.randomUUID(),
+                  line: Math.max(0, Number(divider.line) || 0),
+                  color: divider.color ?? "#596f86",
+                  text: typeof divider.text === "string" ? divider.text : "",
+                }))
+                .sort((a: SceneDivider, b: SceneDivider) => a.line - b.line)
+            : [],
+        );
+        if (
+          p.structure_view === "scene" ||
+          p.structure_view === "part" ||
+          p.structure_view === "both"
+        )
+          setStructureView(p.structure_view);
         if (Number.isFinite(Number(p.scene_width)))
           setSceneWidth(Math.max(120, Math.min(520, Number(p.scene_width))));
         setDialoguePatterns(p.dialogue_patterns ?? ["A「B」", "A『B』"]);
@@ -1420,6 +1698,8 @@ export default function Home() {
         dialogue,
         scene_text: sceneText,
         scene_dividers: sceneDividers,
+        part_dividers: partDividers,
+        structure_view: structureView,
         scene_width: sceneWidth,
         first_cut_name: firstCutName,
         cuts: sortedCuts,
@@ -2488,6 +2768,7 @@ export default function Home() {
     else if (exportKind === "srt") download(`${name}.srt`, srt());
     else if (exportKind === "voicevox")
       download(`${name}.csv`, "\ufeff" + voicevox(), "text/csv;charset=utf-8");
+    else if (exportKind === "spreadsheet") await exportSpreadsheet(name);
     else if (exportKind === "wav") {
       try {
         await exportVoicevoxWav(name);
@@ -2527,6 +2808,7 @@ export default function Home() {
       onPointerMove={(e) => {
         dragMove(e);
         moveSceneDivider(e);
+        movePartDivider(e);
         resizeSceneColumn(e);
         resizeColumns(e);
       }}
@@ -2534,6 +2816,7 @@ export default function Home() {
         setDragId(null);
         setResizeId(null);
         setSceneDragId(null);
+        setPartDragId(null);
         setSceneWidthDragging(false);
         setSplitDragging(false);
       }}
@@ -2609,6 +2892,9 @@ export default function Home() {
               </button>
               <button onClick={() => openExport("movie")}>
                 カット別ムービー（MP4 ZIP）
+              </button>
+              <button onClick={() => openExport("spreadsheet")}>
+                スプレッドシート（XLSX / CSV）
               </button>
             </div>
           )}
@@ -2692,16 +2978,22 @@ export default function Home() {
       </section>
       <section
         ref={workspaceRef}
-        className={`workspace ${dragId || resizeId || sceneDragId || sceneWidthDragging || splitDragging ? "is-dragging" : ""}`}
+        className={`workspace ${dragId || resizeId || sceneDragId || partDragId || sceneWidthDragging || splitDragging ? "is-dragging" : ""}`}
         style={
           {
             "--editor-font": `${fontSize}px`,
             "--editor-lines": lines,
             "--scene-lines": sceneDisplayLines,
-            "--scene-width": `${sceneWidth}px`,
+            "--scene-width": `${sceneWidth * (structureView === "both" ? 2 : 1)}px`,
+            "--structure-panel-width": `${sceneWidth}px`,
           } as React.CSSProperties
         }
       >
+        <div
+          ref={structurePanelsRef}
+          className={`structure-panels ${structureView === "both" ? "show-both" : "show-single"}`}
+        >
+        {structureView !== "part" && (
         <div
           ref={scenePanelRef}
           className="scene-panel editor-panel"
@@ -2723,8 +3015,11 @@ export default function Home() {
           }}
         >
           <div className="panel-head">
-            <b>シーン</b>
-            <span>SCENE</span>
+            <div className="structure-tabs" role="tablist" aria-label="構成欄の表示">
+              <button className={structureView === "scene" ? "active" : ""} onClick={() => setStructureView("scene")}>シーン</button>
+              <button onClick={() => setStructureView("part")}>パート</button>
+              <button className={structureView === "both" ? "active" : ""} onClick={() => setStructureView("both")}>同時</button>
+            </div>
             <button
               type="button"
               className="scene-add-button"
@@ -2850,10 +3145,160 @@ export default function Home() {
             );
           })}
         </div>
+        )}
+        {structureView !== "scene" && (
+        <div
+          ref={partPanelRef}
+          className="scene-panel part-panel editor-panel"
+          onDoubleClick={(e) => {
+            if ((e.target as HTMLElement).closest(".scene-divider")) return;
+            const rect = e.currentTarget.getBoundingClientRect(),
+              maxRow = Math.max(
+                sceneDisplayLines - 1,
+                Math.floor((rect.height - 42) / (fontSize * 1.55)) - 1,
+              ),
+              row = Math.max(
+                0,
+                Math.min(
+                  maxRow,
+                  Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
+                ),
+              );
+            addPartDivider(row);
+          }}
+        >
+          <div className="panel-head">
+            <div className="structure-tabs" role="tablist" aria-label="構成欄の表示">
+              <button onClick={() => setStructureView("scene")}>シーン</button>
+              <button className={structureView === "part" ? "active" : ""} onClick={() => setStructureView("part")}>パート</button>
+              <button className={structureView === "both" ? "active" : ""} onClick={() => setStructureView("both")}>同時</button>
+            </div>
+            <button
+              type="button"
+              className="scene-add-button"
+              title="パートを追加"
+              aria-label="パートを追加"
+              onClick={() =>
+                addPartDivider(
+                  partDividers.length
+                    ? Math.max(...partDividers.map((divider) => divider.line)) + 4
+                    : 0,
+                )
+              }
+            >
+              ＋
+            </button>
+          </div>
+          <div className="scene-tints" aria-hidden="true">
+            {partDividers.map((divider, index) => {
+              const nextLine = partDividers[index + 1]?.line ?? sceneDisplayLines;
+              return (
+                <i
+                  key={divider.id}
+                  style={{
+                    top: `calc(${divider.line} * var(--editor-font) * 1.55)`,
+                    height: `calc(${Math.max(1, nextLine - divider.line)} * var(--editor-font) * 1.55)`,
+                    backgroundColor: `${divider.color}18`,
+                  }}
+                />
+              );
+            })}
+          </div>
+          {!partDividers.length && (
+            <p className="scene-empty-hint">ダブルクリックまたは「＋」で追加</p>
+          )}
+          {partDividers.map((divider, index) => {
+            const nextLine = partDividers[index + 1]?.line ?? sceneDisplayLines;
+            return (
+              <textarea
+                key={`${divider.id}-text`}
+                className="scene-section-editor"
+                wrap="off"
+                spellCheck={false}
+                value={divider.text}
+                style={{
+                  top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55 + 20px)`,
+                  height: `max(24px, calc(${Math.max(1, nextLine - divider.line)} * var(--editor-font) * 1.55 - 20px))`,
+                }}
+                onChange={(e) =>
+                  setPartDividers((current) =>
+                    current.map((item) =>
+                      item.id === divider.id ? { ...item, text: e.target.value } : item,
+                    ),
+                  )
+                }
+              />
+            );
+          })}
+          {partDividers.map((divider, index) => {
+            const nextLine = partDividers[index + 1]?.line ?? sceneDisplayLines;
+            return (
+            <div
+              key={divider.id}
+              role="button"
+              tabIndex={0}
+              className="scene-divider part-divider"
+              title="ドラッグで移動・右クリックで色変更"
+              style={{
+                top: `calc(42px + ${divider.line} * var(--editor-font) * 1.55)`,
+                backgroundColor: divider.color,
+              }}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.currentTarget.setPointerCapture(e.pointerId);
+                setPartDragId(divider.id);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setPartDragId(null);
+                e.currentTarget.querySelector<HTMLInputElement>('input[type="color"]')?.click();
+              }}
+            >
+              <span className="scene-label">PART</span>
+              <span className="scene-duration">
+                {formatDisplayedDuration(sceneDuration(divider.line, nextLine))}
+              </span>
+              <button
+                type="button"
+                className="scene-delete-button"
+                title="パートを削除"
+                aria-label="パートを削除"
+                onPointerDown={(e) => e.stopPropagation()}
+                onContextMenu={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setPartDividers((current) =>
+                    current.filter((item) => item.id !== divider.id),
+                  );
+                }}
+              >
+                ×
+              </button>
+              <input
+                type="color"
+                value={divider.color}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) =>
+                  setPartDividers((current) =>
+                    current.map((item) =>
+                      item.id === divider.id ? { ...item, color: e.target.value } : item,
+                    ),
+                  )
+                }
+              />
+            </div>
+            );
+          })}
+        </div>
+        )}
+        </div>
         <div
           className="scene-column-divider"
           role="separator"
-          aria-label="シーン欄の横幅を調整"
+          aria-label="シーン・パート欄の横幅を調整"
           aria-orientation="vertical"
           onPointerDown={(e) => {
             e.preventDefault();
@@ -3126,7 +3571,9 @@ export default function Home() {
                     ? "VOICEVOX音声（WAV）"
                     : exportKind === "movie"
                       ? "カット別ムービー（MP4 ZIP）"
-                  : "保存・書き出し"}
+                      : exportKind === "spreadsheet"
+                        ? "スプレッドシート書き出し"
+                        : "保存・書き出し"}
             </h2>
             <label>
               書き出し名
@@ -3187,6 +3634,25 @@ export default function Home() {
                     VOICEVOX音声の発話中だけ、画面中央より少し左下に表示します。
                   </p>
                 )}
+              </div>
+            )}
+            {exportKind === "spreadsheet" && (
+              <div className="story-settings">
+                <label>
+                  ファイル形式
+                  <select
+                    value={spreadsheetFormat}
+                    onChange={(e) =>
+                      setSpreadsheetFormat(e.target.value as "xlsx" | "csv")
+                    }
+                  >
+                    <option value="xlsx">XLSX（3シート）</option>
+                    <option value="csv">CSV（カット一覧）</option>
+                  </select>
+                </label>
+                <p className="setting-help">
+                  XLSXは「カット一覧」「キャラクター別セリフ」「シーン別集計」を作成し、各見出しから並べ替えできます。
+                </p>
               </div>
             )}
             {exportKind === "xdts" && (

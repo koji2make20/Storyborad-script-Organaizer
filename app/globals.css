@@ -104,7 +104,7 @@
     var(--scene-width) 8px 58px minmax(0, var(--left-col)) 8px minmax(0, var(--right-col))
     80px !important;
 }
-.workspace > .scene-panel {
+.workspace > .structure-panels {
   grid-column: 1;
 }
 .workspace > .rail {
@@ -623,6 +623,45 @@ body {
   height: calc(42px + var(--scene-lines) * var(--editor-font) * 1.55);
   border-radius: 8px 0 0 8px;
   border-right: 0;
+}
+.structure-panels {
+  display: grid;
+  grid-template-columns: minmax(0, var(--structure-panel-width));
+  min-width: 0;
+}
+.structure-panels.show-both {
+  grid-template-columns: repeat(2, minmax(0, var(--structure-panel-width)));
+}
+.structure-panels .scene-panel {
+  width: 100%;
+  border-radius: 0;
+}
+.structure-panels .scene-panel:first-child {
+  border-radius: 8px 0 0 8px;
+}
+.structure-panels.show-both .scene-panel + .scene-panel {
+  border-left: 1px solid #c9c3ba;
+}
+.structure-tabs {
+  display: flex;
+  min-width: 0;
+  gap: 2px;
+}
+.structure-tabs button {
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #6d7478;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.structure-tabs button.active,
+.structure-tabs button:hover {
+  background: #e6ecef;
+  color: #173f52;
 }
 .scene-panel .panel-head {
   flex-wrap: nowrap;
