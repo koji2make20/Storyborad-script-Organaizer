@@ -721,18 +721,6 @@ body {
   text-overflow: ellipsis;
   pointer-events: none;
 }
-.scene-add-button {
-  flex: 0 0 auto;
-  margin-left: auto;
-  padding: 3px 7px;
-  border: 1px solid #c9c3ba;
-  border-radius: 5px;
-  background: #fff;
-  color: #4f4a44;
-  font-size: 10px;
-  font-weight: 700;
-  cursor: pointer;
-}
 .scene-tints {
   position: absolute;
   z-index: 1;

@@ -3020,21 +3020,6 @@ export default function Home() {
               <button onClick={() => setStructureView("part")}>パート</button>
               <button className={structureView === "both" ? "active" : ""} onClick={() => setStructureView("both")}>同時</button>
             </div>
-            <button
-              type="button"
-              className="scene-add-button"
-              title="シーンを追加"
-              aria-label="シーンを追加"
-              onClick={() =>
-                addSceneDivider(
-                  sceneDividers.length
-                    ? Math.max(...sceneDividers.map((divider) => divider.line)) + 4
-                    : 0,
-                )
-              }
-            >
-              ＋
-            </button>
           </div>
           <div className="scene-tints" aria-hidden="true">
             {sceneDividers.map((divider, index) => {
@@ -3054,7 +3039,7 @@ export default function Home() {
           </div>
           {!sceneDividers.length && (
             <p className="scene-empty-hint">
-              ダブルクリックまたは「＋」で追加
+              ダブルクリックで追加
             </p>
           )}
           {sceneDividers.map((divider, index) => {
@@ -3168,26 +3153,15 @@ export default function Home() {
           }}
         >
           <div className="panel-head">
-            <div className="structure-tabs" role="tablist" aria-label="構成欄の表示">
-              <button onClick={() => setStructureView("scene")}>シーン</button>
-              <button className={structureView === "part" ? "active" : ""} onClick={() => setStructureView("part")}>パート</button>
-              <button className={structureView === "both" ? "active" : ""} onClick={() => setStructureView("both")}>同時</button>
-            </div>
-            <button
-              type="button"
-              className="scene-add-button"
-              title="パートを追加"
-              aria-label="パートを追加"
-              onClick={() =>
-                addPartDivider(
-                  partDividers.length
-                    ? Math.max(...partDividers.map((divider) => divider.line)) + 4
-                    : 0,
-                )
-              }
-            >
-              ＋
-            </button>
+            {structureView === "part" ? (
+              <div className="structure-tabs" role="tablist" aria-label="構成欄の表示">
+                <button onClick={() => setStructureView("scene")}>シーン</button>
+                <button className="active" onClick={() => setStructureView("part")}>パート</button>
+                <button onClick={() => setStructureView("both")}>同時</button>
+              </div>
+            ) : (
+              <b>パート</b>
+            )}
           </div>
           <div className="scene-tints" aria-hidden="true">
             {partDividers.map((divider, index) => {
@@ -3205,7 +3179,7 @@ export default function Home() {
             })}
           </div>
           {!partDividers.length && (
-            <p className="scene-empty-hint">ダブルクリックまたは「＋」で追加</p>
+            <p className="scene-empty-hint">ダブルクリックで追加</p>
           )}
           {partDividers.map((divider, index) => {
             const nextLine = partDividers[index + 1]?.line ?? sceneDisplayLines;
