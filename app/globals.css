@@ -491,8 +491,8 @@ body {
   border-color: var(--accent2);
 }
 .playback-timecode {
-  flex: 0 0 18px;
-  height: 18px;
+  flex: 0 0 27px;
+  height: 27px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -501,7 +501,7 @@ body {
   border-bottom: 1px solid #d8d4cc;
   background: #243b47;
   color: #dce5e9;
-  font: 700 9px/17px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font: 700 12px/26px ui-monospace, "Cascadia Mono", Consolas, monospace;
   letter-spacing: .03em;
   white-space: nowrap;
 }

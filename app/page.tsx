@@ -1268,7 +1268,6 @@ export default function Home() {
         });
       } else queue.push({ pauseFrames: 6, position: lineStart });
     }
-    while (queue.length && "pauseFrames" in queue.at(-1)!) queue.pop();
     if (!queue.some((item) => "body" in item)) return;
     setPlaybackFrameValue(timelineFrameAtRow(startRow));
     setPlaybackCursor(cursor);
