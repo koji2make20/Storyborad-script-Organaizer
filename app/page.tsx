@@ -1383,12 +1383,10 @@ export default function Home() {
         setSpeaking(false);
         restoreSelection();
       };
-      utterance.onstart = () =>
-        startPlaybackClock({
-          start: item.start,
-          end: item.end,
-          durationSeconds: Math.max(0.1, item.body.length / cps),
-        });
+      // The browser voice duration cannot be predicted reliably from the
+      // character count or the rate value. Let the engine's boundary events
+      // drive the caret, while the clock follows the actual elapsed audio.
+      utterance.onstart = () => startPlaybackClock();
       utterance.onboundary = (event) => {
         if (run !== playbackRunRef.current) return;
         movePlaybackCursor(item.start + event.charIndex);
