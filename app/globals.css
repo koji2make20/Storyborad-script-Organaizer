@@ -101,7 +101,7 @@
 .workspace {
   --scene-width: clamp(150px, 12vw, 250px);
   grid-template-columns:
-    var(--scene-width) 8px 58px minmax(0, var(--left-col)) 8px minmax(0, var(--right-col))
+    var(--scene-width) 8px 58px minmax(240px, var(--left-col)) 8px minmax(240px, var(--right-col))
     80px !important;
 }
 .workspace > .structure-panels {
@@ -495,7 +495,8 @@ body {
   height: 27px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 30px;
   box-sizing: border-box;
   padding: 0 28px;
   border-bottom: 1px solid #d8d4cc;
@@ -504,6 +505,7 @@ body {
   font: 700 12px/26px ui-monospace, "Cascadia Mono", Consolas, monospace;
   letter-spacing: .03em;
   white-space: nowrap;
+  overflow-x: auto;
 }
 .playback-timecode.is-playing {
   background: #173f52;
@@ -518,6 +520,12 @@ body {
   padding: 10px 28px;
   border-bottom: 1px solid var(--line);
   background: #f9f8f5;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+}
+.controlbar > * {
+  flex-shrink: 0;
 }
 .controlbar label {
   display: flex;
@@ -1185,10 +1193,10 @@ footer {
   .controlbar {
     padding: 8px 14px;
     gap: 10px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
   .summary {
-    width: 100%;
+    width: auto;
   }
   .workspace {
     padding: 10px;
@@ -1197,5 +1205,20 @@ footer {
       var(--scene-width) 8px 42px minmax(250px, var(--left-col)) 8px
       minmax(250px, var(--right-col)) 55px !important;
     overflow-x: auto;
+  }
+}
+@media (max-width: 1050px) {
+  .topbar {
+    gap: 12px;
+  }
+  .brand small {
+    display: none;
+  }
+  .topbar nav {
+    gap: 5px;
+  }
+  .topbar button {
+    padding-right: 9px;
+    padding-left: 9px;
   }
 }
