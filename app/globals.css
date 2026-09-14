@@ -511,6 +511,14 @@ body {
   background: #173f52;
   color: #fff;
 }
+.playback-timecode-main {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+.playback-cut-timecode {
+  margin-left: auto;
+}
 .controlbar {
   flex: 0 0 auto;
   min-height: 68px;

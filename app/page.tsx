@@ -3146,11 +3146,12 @@ export default function Home() {
         </label>
       </section>
       <section className={`playback-timecode${speaking ? " is-playing" : ""}`}>
-        <span>
-          全体 {timecode(playbackFrame)} / {timecode(total)}
+        <span className="playback-timecode-main">
+          <span>全体 {timecode(playbackFrame)} / {timecode(total)}</span>
+          <span>CUT {playbackSection?.name ?? "-"}</span>
         </span>
-        <span>
-          CUT {playbackSection?.name ?? "-"} {timecode(playbackCutFrame)} / {timecode(playbackSection?.frames ?? 0)}
+        <span className="playback-cut-timecode">
+          {timecode(playbackCutFrame)} / {timecode(playbackSection?.frames ?? 0)}
         </span>
       </section>
       <section
