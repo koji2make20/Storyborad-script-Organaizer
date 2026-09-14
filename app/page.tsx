@@ -422,6 +422,7 @@ export default function Home() {
     [splitDragging, setSplitDragging] = useState(false),
     [speaking, setSpeaking] = useState(false),
     [playbackFrame, setPlaybackFrame] = useState(0),
+    [playbackCursor, setPlaybackCursor] = useState(0),
     [playbackOpen, setPlaybackOpen] = useState(false),
     [voicevoxHelpOpen, setVoicevoxHelpOpen] = useState(false),
     [playbackRate, setPlaybackRate] = useState(1),
@@ -673,7 +674,19 @@ export default function Home() {
     );
     playbackClockRef.current = null;
   };
-  const startPlaybackClock = () => {
+  const movePlaybackCursor = (position: number) => {
+    const target = dialogueRef.current,
+      next = Math.max(0, Math.min(dialogue.length, Math.floor(position)));
+    setPlaybackCursor(next);
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    target.setSelectionRange(next, next);
+  };
+  const startPlaybackClock = (cursorRange?: {
+    start: number;
+    end: number;
+    durationSeconds: number;
+  }) => {
     stopPlaybackClock();
     const clock = {
       startedAt: performance.now(),
@@ -685,6 +698,17 @@ export default function Home() {
       setPlaybackFrameValue(
         clock.anchor + ((performance.now() - clock.startedAt) / 1000) * FPS,
       );
+      if (cursorRange) {
+        const progress = Math.min(
+          1,
+          (performance.now() - clock.startedAt) /
+            Math.max(1, cursorRange.durationSeconds * 1000),
+        );
+        movePlaybackCursor(
+          cursorRange.start +
+            Math.floor((cursorRange.end - cursorRange.start) * progress),
+        );
+      }
       clock.animation = requestAnimationFrame(tick);
     };
     playbackClockRef.current = clock;
@@ -713,15 +737,17 @@ export default function Home() {
       pad = (value: number) => String(value).padStart(2, "0");
     return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}:${pad(safeFrames % FPS)}`;
   };
-  let playbackSection = sections.at(-1) ?? sections[0],
+  const playbackCursorRow = dialogue.slice(0, playbackCursor).split("\n").length - 1;
+  let playbackSection =
+      sections.find(
+        (section) =>
+          playbackCursorRow >= section.start && playbackCursorRow < section.end,
+      ) ?? sections.at(-1) ?? sections[0],
     playbackSectionStart = 0,
     elapsedSectionFrames = 0;
   for (let index = 0; index < sections.length; index++) {
     const section = sections[index];
-    if (
-      playbackFrame < elapsedSectionFrames + section.frames ||
-      index === sections.length - 1
-    ) {
+    if (section === playbackSection) {
       playbackSection = section;
       playbackSectionStart = elapsedSectionFrames;
       break;
@@ -1203,7 +1229,7 @@ export default function Home() {
       startRow = before.split("\n").length - 1,
       queue: (
         | { speaker: string; body: string; start: number; end: number }
-        | { pauseFrames: number }
+        | { pauseFrames: number; position: number }
       )[] = [];
     let activeSpeaker = activeBefore ?? "",
       absoluteStart = cursor;
@@ -1240,11 +1266,12 @@ export default function Home() {
           start,
           end: start + body.length,
         });
-      } else queue.push({ pauseFrames: 6 });
+      } else queue.push({ pauseFrames: 6, position: lineStart });
     }
     while (queue.length && "pauseFrames" in queue.at(-1)!) queue.pop();
     if (!queue.some((item) => "body" in item)) return;
     setPlaybackFrameValue(timelineFrameAtRow(startRow));
+    setPlaybackCursor(cursor);
     playbackSelectionRef.current = { start: cursor, end: originalEnd };
     const run = ++playbackRunRef.current;
     speechSynthesis.cancel();
@@ -1260,6 +1287,7 @@ export default function Home() {
       }
       const item = queue[index];
       if ("pauseFrames" in item) {
+        movePlaybackCursor(item.position);
         startPlaybackClock();
         window.setTimeout(
           () => {
@@ -1272,7 +1300,7 @@ export default function Home() {
       }
       const target = dialogueRef.current;
       target?.focus({ preventScroll: true });
-      target?.setSelectionRange(item.start, item.end);
+      movePlaybackCursor(item.start);
       if (playbackEngine === "voicevox") {
         const styleId =
           voicevoxSpeakerStyles[item.speaker] ?? voicevoxStyles[0]?.id;
@@ -1323,7 +1351,14 @@ export default function Home() {
             restoreSelection();
           };
           await audio.play();
-          startPlaybackClock();
+          startPlaybackClock({
+            start: item.start,
+            end: item.end,
+            durationSeconds:
+              Number.isFinite(audio.duration) && audio.duration > 0
+                ? audio.duration
+                : Math.max(0.1, item.body.length / cps),
+          });
         } catch (error) {
           if (run !== playbackRunRef.current) return;
           stopVoicevoxAudio();
@@ -1349,7 +1384,16 @@ export default function Home() {
         setSpeaking(false);
         restoreSelection();
       };
-      utterance.onstart = () => startPlaybackClock();
+      utterance.onstart = () =>
+        startPlaybackClock({
+          start: item.start,
+          end: item.end,
+          durationSeconds: Math.max(0.1, item.body.length / cps),
+        });
+      utterance.onboundary = (event) => {
+        if (run !== playbackRunRef.current) return;
+        movePlaybackCursor(item.start + event.charIndex);
+      };
       utterance.onend = () => {
         stopPlaybackClock();
         void playNext(index + 1);
@@ -3015,14 +3059,6 @@ export default function Home() {
           }}
         />
       </header>
-      <section className={`playback-timecode${speaking ? " is-playing" : ""}`}>
-        <span>
-          全体 {timecode(playbackFrame)} / {timecode(total)}
-        </span>
-        <span>
-          CUT {playbackSection?.name ?? "-"} {timecode(playbackCutFrame)} / {timecode(playbackSection?.frames ?? 0)}
-        </span>
-      </section>
       <section className="controlbar">
         <div className="structure-tabs control-structure-tabs" role="tablist" aria-label="シーン・パート表示">
           <button className={structureView === "scene" ? "active" : ""} onClick={() => setStructureView("scene")}>シーン</button>
@@ -3093,6 +3129,14 @@ export default function Home() {
           <b>{fontSize}</b>
           <span>px</span>
         </label>
+      </section>
+      <section className={`playback-timecode${speaking ? " is-playing" : ""}`}>
+        <span>
+          全体 {timecode(playbackFrame)} / {timecode(total)}
+        </span>
+        <span>
+          CUT {playbackSection?.name ?? "-"} {timecode(playbackCutFrame)} / {timecode(playbackSection?.frames ?? 0)}
+        </span>
       </section>
       <section
         ref={workspaceRef}
@@ -3526,6 +3570,13 @@ export default function Home() {
             onChange={(e) =>
               sync("dialogue", e.target.value, e.target.selectionStart)
             }
+            onSelect={(e) => {
+              if (speaking) return;
+              const position = e.currentTarget.selectionStart,
+                row = dialogue.slice(0, position).split("\n").length - 1;
+              setPlaybackCursor(position);
+              setPlaybackFrameValue(timelineFrameAtRow(row));
+            }}
           />
         </div>
         {sortedCuts.map((cut) => {
