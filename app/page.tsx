@@ -421,6 +421,7 @@ export default function Home() {
     [sceneWidthDragging, setSceneWidthDragging] = useState(false),
     [splitDragging, setSplitDragging] = useState(false),
     [speaking, setSpeaking] = useState(false),
+    [playbackFrame, setPlaybackFrame] = useState(0),
     [playbackOpen, setPlaybackOpen] = useState(false),
     [voicevoxHelpOpen, setVoicevoxHelpOpen] = useState(false),
     [playbackRate, setPlaybackRate] = useState(1),
@@ -461,6 +462,12 @@ export default function Home() {
       workspaceScrollLeft: number;
     } | null>(null),
     playbackRunRef = useRef(0),
+    playbackFrameRef = useRef(0),
+    playbackClockRef = useRef<{
+      startedAt: number;
+      anchor: number;
+      animation: number;
+    } | null>(null),
     playbackSelectionRef = useRef<{ start: number; end: number } | null>(null),
     voicevoxAudioRef = useRef<HTMLAudioElement | null>(null),
     voicevoxObjectUrlRef = useRef<string | null>(null),
@@ -496,6 +503,13 @@ export default function Home() {
     }
     pendingSelectionRef.current = null;
   }, [action, dialogue, sceneText]);
+  useEffect(
+    () => () => {
+      const clock = playbackClockRef.current;
+      if (clock) cancelAnimationFrame(clock.animation);
+    },
+    [],
+  );
   useEffect(() => {
     const active = document.activeElement,
       focusSide =
@@ -645,6 +659,79 @@ export default function Home() {
         return sum + section.frames * (overlap / sectionRows);
       }, 0),
     );
+  const setPlaybackFrameValue = (frames: number) => {
+    const next = Math.max(0, Math.min(total, Math.floor(frames)));
+    playbackFrameRef.current = next;
+    setPlaybackFrame(next);
+  };
+  const stopPlaybackClock = () => {
+    const clock = playbackClockRef.current;
+    if (!clock) return;
+    cancelAnimationFrame(clock.animation);
+    setPlaybackFrameValue(
+      clock.anchor + ((performance.now() - clock.startedAt) / 1000) * FPS,
+    );
+    playbackClockRef.current = null;
+  };
+  const startPlaybackClock = () => {
+    stopPlaybackClock();
+    const clock = {
+      startedAt: performance.now(),
+      anchor: playbackFrameRef.current,
+      animation: 0,
+    };
+    const tick = () => {
+      if (playbackClockRef.current !== clock) return;
+      setPlaybackFrameValue(
+        clock.anchor + ((performance.now() - clock.startedAt) / 1000) * FPS,
+      );
+      clock.animation = requestAnimationFrame(tick);
+    };
+    playbackClockRef.current = clock;
+    clock.animation = requestAnimationFrame(tick);
+  };
+  const timelineFrameAtRow = (row: number) => {
+    let elapsed = 0;
+    for (const section of sections) {
+      if (row >= section.end) {
+        elapsed += section.frames;
+        continue;
+      }
+      if (row > section.start) {
+        const rows = Math.max(1, section.end - section.start);
+        elapsed += Math.round(
+          section.frames * ((row - section.start) / rows),
+        );
+      }
+      break;
+    }
+    return elapsed;
+  };
+  const timecode = (frames: number) => {
+    const safeFrames = Math.max(0, Math.floor(frames)),
+      seconds = Math.floor(safeFrames / FPS),
+      pad = (value: number) => String(value).padStart(2, "0");
+    return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}:${pad(safeFrames % FPS)}`;
+  };
+  let playbackSection = sections.at(-1) ?? sections[0],
+    playbackSectionStart = 0,
+    elapsedSectionFrames = 0;
+  for (let index = 0; index < sections.length; index++) {
+    const section = sections[index];
+    if (
+      playbackFrame < elapsedSectionFrames + section.frames ||
+      index === sections.length - 1
+    ) {
+      playbackSection = section;
+      playbackSectionStart = elapsedSectionFrames;
+      break;
+    }
+    elapsedSectionFrames += section.frames;
+  }
+  const playbackCutFrame = Math.max(
+    0,
+    Math.min(playbackSection?.frames ?? 0, playbackFrame - playbackSectionStart),
+  );
   const structureTextAt = (dividers: SceneDivider[], line: number) => {
     const divider = [...dividers]
       .reverse()
@@ -911,6 +998,7 @@ export default function Home() {
     historyGroupRef.current = null;
     playbackRunRef.current += 1;
     speechSynthesis.cancel();
+    stopPlaybackClock();
     setSpeaking(false);
     setAction(snapshot.action);
     setDialogue(snapshot.dialogue);
@@ -1100,6 +1188,7 @@ export default function Home() {
       playbackRunRef.current += 1;
       speechSynthesis.cancel();
       stopVoicevoxAudio();
+      stopPlaybackClock();
       setSpeaking(false);
       restoreSelection();
       return;
@@ -1155,6 +1244,7 @@ export default function Home() {
     }
     while (queue.length && "pauseFrames" in queue.at(-1)!) queue.pop();
     if (!queue.some((item) => "body" in item)) return;
+    setPlaybackFrameValue(timelineFrameAtRow(startRow));
     playbackSelectionRef.current = { start: cursor, end: originalEnd };
     const run = ++playbackRunRef.current;
     speechSynthesis.cancel();
@@ -1163,14 +1253,19 @@ export default function Home() {
     const playNext = async (index: number) => {
       if (run !== playbackRunRef.current) return;
       if (index >= queue.length) {
+        stopPlaybackClock();
         setSpeaking(false);
         restoreSelection();
         return;
       }
       const item = queue[index];
       if ("pauseFrames" in item) {
+        startPlaybackClock();
         window.setTimeout(
-          () => playNext(index + 1),
+          () => {
+            stopPlaybackClock();
+            void playNext(index + 1);
+          },
           (item.pauseFrames / FPS) * 1000,
         );
         return;
@@ -1182,6 +1277,7 @@ export default function Home() {
         const styleId =
           voicevoxSpeakerStyles[item.speaker] ?? voicevoxStyles[0]?.id;
         if (styleId == null) {
+          stopPlaybackClock();
           setSpeaking(false);
           restoreSelection();
           window.alert("VOICEVOXへ接続し、話者スタイルを設定してください。");
@@ -1216,18 +1312,22 @@ export default function Home() {
           voicevoxObjectUrlRef.current = objectUrl;
           voicevoxAudioRef.current = audio;
           audio.onended = () => {
+            stopPlaybackClock();
             stopVoicevoxAudio();
             void playNext(index + 1);
           };
           audio.onerror = () => {
+            stopPlaybackClock();
             stopVoicevoxAudio();
             setSpeaking(false);
             restoreSelection();
           };
           await audio.play();
+          startPlaybackClock();
         } catch (error) {
           if (run !== playbackRunRef.current) return;
           stopVoicevoxAudio();
+          stopPlaybackClock();
           setSpeaking(false);
           restoreSelection();
           window.alert(
@@ -1243,11 +1343,16 @@ export default function Home() {
         0.5,
         Math.min(2, playbackRate * (syncPlaybackRate ? cps / 8 : 1)),
       );
-      utterance.onend = () => void playNext(index + 1);
       utterance.onerror = () => {
         if (run !== playbackRunRef.current) return;
+        stopPlaybackClock();
         setSpeaking(false);
         restoreSelection();
+      };
+      utterance.onstart = () => startPlaybackClock();
+      utterance.onend = () => {
+        stopPlaybackClock();
+        void playNext(index + 1);
       };
       speechSynthesis.speak(utterance);
     };
@@ -2910,7 +3015,20 @@ export default function Home() {
           }}
         />
       </header>
+      <section className={`playback-timecode${speaking ? " is-playing" : ""}`}>
+        <span>
+          全体 {timecode(playbackFrame)} / {timecode(total)}
+        </span>
+        <span>
+          CUT {playbackSection?.name ?? "-"} {timecode(playbackCutFrame)} / {timecode(playbackSection?.frames ?? 0)}
+        </span>
+      </section>
       <section className="controlbar">
+        <div className="structure-tabs control-structure-tabs" role="tablist" aria-label="シーン・パート表示">
+          <button className={structureView === "scene" ? "active" : ""} onClick={() => setStructureView("scene")}>シーン</button>
+          <button className={structureView === "part" ? "active" : ""} onClick={() => setStructureView("part")}>パート</button>
+          <button className={structureView === "both" ? "active" : ""} onClick={() => setStructureView("both")}>同時</button>
+        </div>
         <div className="summary">
           <strong>{sections.length}</strong>
           <span>カット</span>
@@ -3015,11 +3133,7 @@ export default function Home() {
           }}
         >
           <div className="panel-head">
-            <div className="structure-tabs" role="tablist" aria-label="構成欄の表示">
-              <button className={structureView === "scene" ? "active" : ""} onClick={() => setStructureView("scene")}>シーン</button>
-              <button onClick={() => setStructureView("part")}>パート</button>
-              <button className={structureView === "both" ? "active" : ""} onClick={() => setStructureView("both")}>同時</button>
-            </div>
+            <b>シーン</b>
           </div>
           <div className="scene-tints" aria-hidden="true">
             {sceneDividers.map((divider, index) => {
@@ -3153,15 +3267,7 @@ export default function Home() {
           }}
         >
           <div className="panel-head">
-            {structureView === "part" ? (
-              <div className="structure-tabs" role="tablist" aria-label="構成欄の表示">
-                <button onClick={() => setStructureView("scene")}>シーン</button>
-                <button className="active" onClick={() => setStructureView("part")}>パート</button>
-                <button onClick={() => setStructureView("both")}>同時</button>
-              </div>
-            ) : (
-              <b>パート</b>
-            )}
+            <b>パート</b>
           </div>
           <div className="scene-tints" aria-hidden="true">
             {partDividers.map((divider, index) => {
