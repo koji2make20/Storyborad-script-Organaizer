@@ -714,22 +714,42 @@ export default function Home() {
     playbackClockRef.current = clock;
     clock.animation = requestAnimationFrame(tick);
   };
-  const timelineFrameAtRow = (row: number) => {
-    let elapsed = 0;
-    for (const section of sections) {
-      if (row >= section.end) {
-        elapsed += section.frames;
-        continue;
-      }
-      if (row > section.start) {
-        const rows = Math.max(1, section.end - section.start);
-        elapsed += Math.round(
-          section.frames * ((row - section.start) / rows),
-        );
-      }
-      break;
+  const timelineFrameAtOffset = (position: number) => {
+    const safePosition = Math.max(0, Math.min(dialogue.length, position)),
+      before = dialogue.slice(0, safePosition),
+      row = before.split("\n").length - 1,
+      column = before.length - (before.lastIndexOf("\n") + 1),
+      foundSectionIndex = sections.findIndex(
+        (section) => row >= section.start && row < section.end,
+      ),
+      sectionIndex =
+        foundSectionIndex < 0
+          ? Math.max(0, sections.length - 1)
+          : foundSectionIndex,
+      section = sections[sectionIndex],
+      elapsed = sections
+        .slice(0, sectionIndex)
+        .reduce((sum, item) => sum + item.frames, 0),
+      isTrimmed = (line: number) =>
+        sortedCuts.some(
+          (cut) => line >= cut.line && line < cut.line + (cut.trimRows ?? 0),
+        ),
+      localLines: string[] = [];
+    if (!section) return 0;
+    for (let line = section.start; line <= row; line++) {
+      if (isTrimmed(line)) continue;
+      localLines.push(
+        line === row
+          ? (dialogueLines[line] ?? "").slice(0, column)
+          : (dialogueLines[line] ?? ""),
+      );
     }
-    return elapsed;
+    const localText = localLines.join("\n"),
+      localFrames =
+        localText.trim() === ""
+          ? (localText.match(/\n/g)?.length ?? 0) * 6
+          : readingFrames(localText, cps);
+    return elapsed + Math.min(section.frames, localFrames);
   };
   const timecode = (frames: number) => {
     const safeFrames = Math.max(0, Math.floor(frames)),
@@ -1203,12 +1223,10 @@ export default function Home() {
   };
   const toggleSpeech = () => {
     const restoreSelection = () => {
-      const selection = playbackSelectionRef.current,
-        target = dialogueRef.current;
+      const target = dialogueRef.current;
       playbackSelectionRef.current = null;
-      if (!selection || !target) return;
+      if (!target) return;
       target.focus({ preventScroll: true });
-      target.setSelectionRange(selection.start, selection.end);
     };
     if (speaking) {
       playbackRunRef.current += 1;
@@ -1269,7 +1287,7 @@ export default function Home() {
       } else queue.push({ pauseFrames: 6, position: lineStart });
     }
     if (!queue.some((item) => "body" in item)) return;
-    setPlaybackFrameValue(timelineFrameAtRow(startRow));
+    setPlaybackFrameValue(timelineFrameAtOffset(cursor));
     setPlaybackCursor(cursor);
     playbackSelectionRef.current = { start: cursor, end: originalEnd };
     const run = ++playbackRunRef.current;
@@ -3569,10 +3587,9 @@ export default function Home() {
             }
             onSelect={(e) => {
               if (speaking) return;
-              const position = e.currentTarget.selectionStart,
-                row = dialogue.slice(0, position).split("\n").length - 1;
+              const position = e.currentTarget.selectionStart;
               setPlaybackCursor(position);
-              setPlaybackFrameValue(timelineFrameAtRow(row));
+              setPlaybackFrameValue(timelineFrameAtOffset(position));
             }}
           />
         </div>
