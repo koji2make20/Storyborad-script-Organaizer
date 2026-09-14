@@ -491,6 +491,7 @@ body {
   border-color: var(--accent2);
 }
 .playback-timecode {
+  position: relative;
   flex: 0 0 27px;
   height: 27px;
   display: flex;
@@ -511,10 +512,10 @@ body {
   background: #173f52;
   color: #fff;
 }
-.playback-timecode-main {
-  display: flex;
-  align-items: center;
-  gap: 30px;
+.playback-cut-number {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
 }
 .playback-cut-timecode {
   margin-left: auto;

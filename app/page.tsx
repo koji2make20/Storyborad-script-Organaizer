@@ -3146,9 +3146,9 @@ export default function Home() {
         </label>
       </section>
       <section className={`playback-timecode${speaking ? " is-playing" : ""}`}>
-        <span className="playback-timecode-main">
-          <span>全体 {timecode(playbackFrame)} / {timecode(total)}</span>
-          <span>CUT {playbackSection?.name ?? "-"}</span>
+        <span>全体 {timecode(playbackFrame)} / {timecode(total)}</span>
+        <span className="playback-cut-number">
+          CUT {playbackSection?.name ?? "-"}
         </span>
         <span className="playback-cut-timecode">
           {timecode(playbackCutFrame)} / {timecode(playbackSection?.frames ?? 0)}
