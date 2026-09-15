@@ -245,7 +245,7 @@ const download = (
 const BLENDER_ADDON = String.raw`bl_info = {
     "name": "Storyboard Camera Information Importer",
     "author": "Storyboard Script Organizer",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (3, 6, 0),
     "location": "Sequencer > Sidebar > Storyboard",
     "description": "Import scene camera JSON exported by Storyboard Script Organizer",
@@ -371,9 +371,13 @@ class SSO_OT_import_camera_json(Operator, ImportHelper):
     filename_ext = ".json"
     filter_glob: StringProperty(default="*.json", options={"HIDDEN"})
     files: CollectionProperty(type=OperatorFileListElement)
+    directory: StringProperty(subtype="DIR_PATH")
 
     def execute(self, context):
-        paths = [os.path.join(self.directory, item.name) for item in self.files] or [self.filepath]
+        base_dir = self.directory or os.path.dirname(self.filepath)
+        paths = [os.path.join(base_dir, item.name) for item in self.files]
+        if not paths:
+            paths = [self.filepath]
         for path in paths:
             with open(path, "r", encoding="utf-8") as handle:
                 build_scene(json.load(handle), os.path.basename(path))
