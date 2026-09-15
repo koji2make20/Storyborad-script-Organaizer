@@ -554,7 +554,7 @@ export default function Home() {
     [partDividers, setPartDividers] = useState<SceneDivider[]>([]),
     [structureView, setStructureView] = useState<StructureView>("both"),
     [cps, setCps] = useState(8),
-    [autoNormalize, setAutoNormalize] = useState(false),
+    [autoNormalize, setAutoNormalize] = useState(true),
     [mediaExportUnit, setMediaExportUnit] = useState<MediaExportUnit>("cut"),
     [mode, setMode] = useState<"frames" | "frameCount" | "seconds">("frames"),
     [firstCutName, setFirstCutName] = useState("1"),
