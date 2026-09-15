@@ -1071,7 +1071,9 @@ export default function Home() {
     );
   };
   const exportBlenderCameraInfo = async (name: string) => {
-    const sortedScenes = [...partDividers].sort((a, b) => a.line - b.line),
+    // After the user-facing name swap, sceneDividers are displayed as PART.
+    // Blender camera data is therefore split at these part boundaries.
+    const sortedScenes = [...sceneDividers].sort((a, b) => a.line - b.line),
       sceneStarts =
         sortedScenes.length && sortedScenes[0].line === 0
           ? sortedScenes
@@ -1079,7 +1081,7 @@ export default function Home() {
               {
                 id: "blender-scene-start",
                 line: 0,
-                text: "Scene 1",
+                text: "Part 1",
                 color: "#808080",
               },
               ...sortedScenes,
@@ -1099,7 +1101,7 @@ export default function Home() {
             );
       let sceneFrame = 1;
       const cuts = usableSections.map((section) => {
-        const part = structureTextAt(sceneDividers, section.start) || "PART",
+        const part = structureTextAt(partDividers, section.start) || "SCENE",
           startFrame = sceneFrame,
           dialogueItems: {
             speaker: string;
@@ -1146,12 +1148,15 @@ export default function Home() {
       const partNames = [...new Set(cuts.map((cut) => cut.part))],
         payload = {
           format: "storyboard-camera-info",
-          version: 1,
+          version: 2,
           fps: FPS,
           resolution: { width: 1920, height: 1080 },
           scene_number: sceneIndex + 1,
           scene_name:
-            sceneDivider.text.trim() || `Scene ${String(sceneIndex + 1).padStart(3, "0")}`,
+            sceneDivider.text.trim() || `Part ${String(sceneIndex + 1).padStart(3, "0")}`,
+          part_number: sceneIndex + 1,
+          part_name:
+            sceneDivider.text.trim() || `Part ${String(sceneIndex + 1).padStart(3, "0")}`,
           total_frames: cuts.reduce(
             (sum, cut) => sum + cut.duration_frames,
             0,
@@ -4200,7 +4205,7 @@ export default function Home() {
             {exportKind === "blender" && (
               <div className="story-settings">
                 <p className="setting-help">
-                  シーンごとのJSONを番号順（001.json、002.json…）でZIPにまとめます。シーン尺、パート別カット、カット尺、セリフ情報を収録します。
+                  パートごとのJSONを番号順（001.json、002.json…）でZIPにまとめます。パート尺、シーン別カット、カット尺、セリフ情報を収録します。
                 </p>
                 <p className="setting-help">
                   Blenderアドオンで読み込むと、パート別カメラコレクション、カメラマーカー、黒背景、カット番号、24fpsタイムコード、話者別セリフボールドをVSEへ配置します。
