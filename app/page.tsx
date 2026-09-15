@@ -245,7 +245,7 @@ const download = (
 const BLENDER_ADDON = String.raw`bl_info = {
     "name": "Storyboard Camera Information Importer",
     "author": "Storyboard Script Organizer",
-    "version": (1, 0, 1),
+    "version": (1, 0, 2),
     "blender": (3, 6, 0),
     "location": "Sequencer > Sidebar > Storyboard",
     "description": "Import scene camera JSON exported by Storyboard Script Organizer",
@@ -272,8 +272,8 @@ def strips(scene):
     return getattr(editor, "sequences", None) or getattr(editor, "strips", None)
 
 def add_effect(seq, name, kind, channel, start, end):
-    return seq.new_effect(name=name, type=kind, channel=channel,
-                          frame_start=int(start), frame_end=max(int(start) + 1, int(end)))
+    return seq.new_effect(name, kind, channel,
+                          int(start), max(int(start) + 1, int(end)))
 
 def set_text_style(strip, size, x, y, color=(1, 1, 1, 1), box=False):
     if hasattr(strip, "font_size"): strip.font_size = size
@@ -287,23 +287,10 @@ def rgba(value):
     try: return tuple(int(value[i:i+2], 16) / 255 for i in (0, 2, 4)) + (1,)
     except Exception: return (0.77, 0.29, 0.20, 1)
 
-def clear_generated(scene):
-    if scene.sequence_editor:
-        seq = strips(scene)
-        for item in list(seq): seq.remove(item)
-    for marker in list(scene.timeline_markers): scene.timeline_markers.remove(marker)
-
 def build_scene(data, source_name):
     name = str(data.get("scene_name") or os.path.splitext(source_name)[0])
-    scene = bpy.data.scenes.get(name) or bpy.data.scenes.new(name)
-    bpy.context.window.scene = scene
-    clear_generated(scene)
-    scene.render.resolution_x = 1920
-    scene.render.resolution_y = 1080
-    scene.render.resolution_percentage = 100
-    scene.render.fps = int(data.get("fps", 24))
-    scene.frame_start = 1
-    scene.frame_end = max(1, int(data.get("total_frames", 1)))
+    scene = bpy.context.scene
+    scene.frame_end = max(scene.frame_end, int(data.get("total_frames", 1)))
     scene["sso_camera_schedule"] = json.dumps(data.get("cuts", []), ensure_ascii=False)
 
     root = bpy.data.collections.get("SSO_" + name) or bpy.data.collections.new("SSO_" + name)
