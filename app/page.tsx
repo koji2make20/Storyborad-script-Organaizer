@@ -3922,6 +3922,7 @@ export default function Home() {
           }}
         />
         <div ref={cutLayerRef} className="cut-layer">
+          <span className="cut-add-hint">クリックで追加</span>
           {Array.from({ length: lines }, (_, i) => (
             <div key={i} className="cut-row">
               {!sortedCuts.some((c) => c.line === i) && (

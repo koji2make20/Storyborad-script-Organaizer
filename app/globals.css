@@ -933,6 +933,20 @@ body {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
+.cut-add-hint {
+  position: absolute;
+  z-index: 2;
+  top: 18px;
+  right: 4px;
+  left: 4px;
+  color: #99938b;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 16px;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
 .column-divider {
   position: relative;
   z-index: 9;
