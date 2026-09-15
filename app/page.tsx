@@ -4116,7 +4116,7 @@ export default function Home() {
             {exportKind === "wav" && (
               <div>
               <div className="export-unit-options" role="radiogroup" aria-label="音声の出力単位">
-                {(["scene", "part", "cut"] as MediaExportUnit[]).map((unit) => (
+                {(["part", "scene", "cut"] as MediaExportUnit[]).map((unit) => (
                   <label className="check" key={unit}>
                     <input type="radio" name="wav-unit" checked={mediaExportUnit === unit} onChange={() => setMediaExportUnit(unit)} />
                     {unit === "scene" ? "シーン毎に出力" : unit === "part" ? "パート毎に出力" : "カット毎に出力"}
@@ -4134,7 +4134,7 @@ export default function Home() {
                   1920×1080・24fps・H.264＋AACのMP4を選択した単位で生成し、ZIPにまとめます。
                 </p>
                 <div className="export-unit-options" role="radiogroup" aria-label="ムービーの出力単位">
-                  {(["scene", "part", "cut"] as MediaExportUnit[]).map((unit) => (
+                  {(["part", "scene", "cut"] as MediaExportUnit[]).map((unit) => (
                     <label className="check" key={unit}>
                       <input type="radio" name="movie-unit" checked={mediaExportUnit === unit} onChange={() => setMediaExportUnit(unit)} />
                       {unit === "scene" ? "シーン毎に出力" : unit === "part" ? "パート毎に出力" : "カット毎に出力"}
