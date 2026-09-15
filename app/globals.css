@@ -520,6 +520,15 @@ body {
 .playback-cut-timecode {
   margin-left: auto;
 }
+.export-unit-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 8px 0;
+}
+.export-unit-options .check {
+  white-space: nowrap;
+}
 .controlbar {
   flex: 0 0 auto;
   min-height: 68px;

@@ -17,6 +17,7 @@ type Cut = {
 type Section = { start: number; end: number; name: string; frames: number };
 type SceneDivider = { id: string; line: number; color: string; text: string };
 type StructureView = "scene" | "part" | "both";
+type MediaExportUnit = "scene" | "part" | "cut";
 type VoicevoxStyle = { id: number; name: string; speaker: string };
 type HistorySnapshot = {
   action: string;
@@ -554,7 +555,7 @@ export default function Home() {
     [structureView, setStructureView] = useState<StructureView>("both"),
     [cps, setCps] = useState(8),
     [autoNormalize, setAutoNormalize] = useState(false),
-    [wavPerCut, setWavPerCut] = useState(false),
+    [mediaExportUnit, setMediaExportUnit] = useState<MediaExportUnit>("cut"),
     [mode, setMode] = useState<"frames" | "frameCount" | "seconds">("frames"),
     [firstCutName, setFirstCutName] = useState("1"),
     [cuts, setCuts] = useState<Cut[]>([
@@ -954,12 +955,43 @@ export default function Home() {
       .find((item) => item.line <= line);
     return divider?.text.trim() ?? "";
   };
+  const mediaExportGroups = (unit: MediaExportUnit) => {
+    if (unit === "cut")
+      return sections.map((section, index) => ({
+        name: xdtsCut(section.name),
+        indexes: [index],
+      }));
+    // The user-facing names are intentionally swapped: internal partDividers
+    // are displayed as scenes, and internal sceneDividers as parts.
+    const dividers = [...(unit === "scene" ? partDividers : sceneDividers)].sort(
+        (a, b) => a.line - b.line,
+      ),
+      starts = dividers.length && dividers[0].line === 0
+        ? dividers
+        : [{ id: "media-start", line: 0, color: "", text: "" }, ...dividers];
+    return starts
+      .map((divider, groupIndex) => {
+        const end = starts[groupIndex + 1]?.line ?? lines,
+          indexes = sections
+            .map((section, index) => ({ section, index }))
+            .filter(({ section }) => section.start >= divider.line && section.start < end)
+            .map(({ index }) => index),
+          label = unit === "scene" ? "シーン" : "パート",
+          number = String(groupIndex + 1).padStart(3, "0"),
+          title = safe(divider.text.trim());
+        return {
+          name: `${label}${number}${title ? `_${title}` : ""}`,
+          indexes,
+        };
+      })
+      .filter((group) => group.indexes.length);
+  };
   const spreadsheetSheets = (): SpreadsheetSheet[] => {
     const cutRows: SpreadsheetCell[][] = [
       ["シーン", "パート", "Cut", "画像用空欄", "ト書き", "セリフ", "尺", "備考"],
       ...sections.map((section) => [
-        structureTextAt(sceneDividers, section.start),
         structureTextAt(partDividers, section.start),
+        structureTextAt(sceneDividers, section.start),
         section.name,
         "",
         actionLines.slice(section.start, section.end).join("\n").trim(),
@@ -976,8 +1008,8 @@ export default function Home() {
         dialogueData.push([
           parsed.speaker,
           section.name,
-          structureTextAt(sceneDividers, section.start),
           structureTextAt(partDividers, section.start),
+          structureTextAt(sceneDividers, section.start),
           parsed.body,
           plus(readingFrames(parsed.body, cps)),
         ]);
@@ -993,14 +1025,14 @@ export default function Home() {
     const sceneRows: SpreadsheetCell[][] = [
       ["シーン", "パート", "開始Cut", "終了Cut", "カット数", "尺"],
     ];
-    sceneDividers.forEach((divider, index) => {
-      const end = sceneDividers[index + 1]?.line ?? lines,
+    partDividers.forEach((divider, index) => {
+      const end = partDividers[index + 1]?.line ?? lines,
         included = sections.filter(
           (section) => section.start < end && section.end > divider.line,
         );
       sceneRows.push([
         divider.text.trim(),
-        structureTextAt(partDividers, divider.line),
+        structureTextAt(sceneDividers, divider.line),
         included[0]?.name ?? "",
         included.at(-1)?.name ?? "",
         included.length,
@@ -1039,7 +1071,7 @@ export default function Home() {
     );
   };
   const exportBlenderCameraInfo = async (name: string) => {
-    const sortedScenes = [...sceneDividers].sort((a, b) => a.line - b.line),
+    const sortedScenes = [...partDividers].sort((a, b) => a.line - b.line),
       sceneStarts =
         sortedScenes.length && sortedScenes[0].line === 0
           ? sortedScenes
@@ -1067,7 +1099,7 @@ export default function Home() {
             );
       let sceneFrame = 1;
       const cuts = usableSections.map((section) => {
-        const part = structureTextAt(partDividers, section.start) || "PART",
+        const part = structureTextAt(sceneDividers, section.start) || "PART",
           startFrame = sceneFrame,
           dialogueItems: {
             speaker: string;
@@ -1216,6 +1248,18 @@ export default function Home() {
         }
         return [...byLine.values()].sort((a, b) => a.line - b.line);
       });
+    if (delta !== 0) {
+      const ripple = (current: SceneDivider[]) =>
+        current
+          .map((divider) =>
+            divider.line > changed
+              ? { ...divider, line: Math.max(0, divider.line + delta) }
+              : divider,
+          )
+          .sort((a, b) => a.line - b.line);
+      setSceneDividers(ripple);
+      setPartDividers(ripple);
+    }
     const next = own.join("\n");
     if (side === "action") {
       setAction(next);
@@ -1754,13 +1798,19 @@ export default function Home() {
         sceneDisplayLines - 1,
         Math.floor((rect.height - 42) / (fontSize * 1.55)) - 1,
       ),
-      row = Math.max(
+      rawRow = Math.max(
         0,
         Math.min(
           maxRow,
           Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
         ),
-      );
+      ),
+      nearestCut = [0, ...sortedCuts.map((cut) => cut.line)].reduce(
+        (nearest, line) =>
+          Math.abs(line - rawRow) < Math.abs(nearest - rawRow) ? line : nearest,
+        0,
+      ),
+      row = Math.abs(nearestCut - rawRow) <= 1 ? nearestCut : rawRow;
     setSceneDividers((current) => {
       if (current.some((divider) => divider.id !== sceneDragId && divider.line === row))
         return current;
@@ -1778,13 +1828,19 @@ export default function Home() {
         sceneDisplayLines - 1,
         Math.floor((rect.height - 42) / (fontSize * 1.55)) - 1,
       ),
-      row = Math.max(
+      rawRow = Math.max(
         0,
         Math.min(
           maxRow,
           Math.floor((e.clientY - rect.top - 42) / (fontSize * 1.55)),
         ),
-      );
+      ),
+      nearestCut = [0, ...sortedCuts.map((cut) => cut.line)].reduce(
+        (nearest, line) =>
+          Math.abs(line - rawRow) < Math.abs(nearest - rawRow) ? line : nearest,
+        0,
+      ),
+      row = Math.abs(nearestCut - rawRow) <= 1 ? nearestCut : rawRow;
     setPartDividers((current) => {
       if (current.some((divider) => divider.id !== partDragId && divider.line === row))
         return current;
@@ -2841,27 +2897,25 @@ export default function Home() {
   };
   const exportVoicevoxWav = async (name: string) => {
     const { sampleRate, pcmSections } = await renderVoicevoxPcmSections();
-    if (wavPerCut) {
-      const zip = new JSZip(), used = new Set<string>();
-      pcmSections.forEach((samples, index) => {
-        const base = xdtsCut(sections[index].name);
-        let filename = `${base}.wav`, suffix = 2;
-        while (used.has(filename)) filename = `${base}_${suffix++}.wav`;
-        used.add(filename);
-        zip.file(filename, encodePcmWav(samples, sampleRate));
-      });
-      download(`${name}_wav.zip`, await zip.generateAsync({ type: "blob" }), "application/zip");
-      return;
+    const zip = new JSZip(), used = new Set<string>();
+    for (const group of mediaExportGroups(mediaExportUnit)) {
+      const length = group.indexes.reduce(
+          (sum, index) => sum + (pcmSections[index]?.length ?? 0),
+          0,
+        ),
+        output = new Float32Array(length);
+      let position = 0;
+      for (const index of group.indexes) {
+        const samples = pcmSections[index] ?? new Float32Array();
+        output.set(samples, position);
+        position += samples.length;
+      }
+      let filename = `${safe(group.name)}.wav`, suffix = 2;
+      while (used.has(filename)) filename = `${safe(group.name)}_${suffix++}.wav`;
+      used.add(filename);
+      zip.file(filename, encodePcmWav(output, sampleRate));
     }
-    const output = new Float32Array(
-        pcmSections.reduce((sum, samples) => sum + samples.length, 0),
-      );
-    let position = 0;
-    for (const samples of pcmSections) {
-      output.set(samples, position);
-      position += samples.length;
-    }
-    download(`${name}.wav`, encodePcmWav(output, sampleRate), "audio/wav");
+    download(`${name}_wav.zip`, await zip.generateAsync({ type: "blob" }), "application/zip");
   };
   const movieTimecode = (frames: number) => {
     const minutes = Math.floor(frames / (FPS * 60)),
@@ -2904,10 +2958,11 @@ export default function Home() {
     canvas.height = 1080;
     const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("映像用Canvasを作成できませんでした。");
-    let activeCut = 0;
+    const movieGroups = mediaExportGroups(mediaExportUnit);
+    let activeGroup = 0;
     ffmpeg.on("progress", ({ progress }) => {
       setBusy(
-        `MP4を生成中… ${activeCut + 1} / ${sections.length}（${Math.max(0, Math.min(100, Math.round(progress * 100)))}%）`,
+        `MP4を生成中… ${activeGroup + 1} / ${movieGroups.length}（${Math.max(0, Math.min(100, Math.round(progress * 100)))}%）`,
       );
     });
     setBusy("MP4エンジンを読み込んでいます…");
@@ -2937,38 +2992,56 @@ export default function Home() {
       } finally {
         window.clearTimeout(loadTimeout);
       }
-      for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
-        activeCut = sectionIndex;
-        const section = sections[sectionIndex],
-          cutNumber = xdtsCut(section.name),
-          framePrefix = `cut_${sectionIndex}_frame_`,
-          wavName = `cut_${sectionIndex}.wav`,
-          mp4Name = `cut_${sectionIndex}.mp4`;
+      for (let groupIndex = 0; groupIndex < movieGroups.length; groupIndex++) {
+        activeGroup = groupIndex;
+        const group = movieGroups[groupIndex],
+          outputName = safe(group.name),
+          framePrefix = `group_${groupIndex}_frame_`,
+          wavName = `group_${groupIndex}.wav`,
+          mp4Name = `group_${groupIndex}.mp4`,
+          groupFrames = group.indexes.reduce(
+            (sum, index) => sum + sections[index].frames,
+            0,
+          ),
+          groupAudioLength = group.indexes.reduce(
+            (sum, index) => sum + (pcmSections[index]?.length ?? 0),
+            0,
+          ),
+          groupAudio = new Float32Array(groupAudioLength);
+        let audioPosition = 0;
+        for (const sectionIndex of group.indexes) {
+          const samples = pcmSections[sectionIndex] ?? new Float32Array();
+          groupAudio.set(samples, audioPosition);
+          audioPosition += samples.length;
+        }
         const frameNames: string[] = [];
-        for (let frameIndex = 0; frameIndex < section.frames; frameIndex++) {
-          const cue = movieDialogueBold
+        let groupFrame = 0;
+        for (const sectionIndex of group.indexes) {
+          const section = sections[sectionIndex], cutNumber = xdtsCut(section.name);
+          for (let frameIndex = 0; frameIndex < section.frames; frameIndex++) {
+            const cue = movieDialogueBold
               ? subtitleSections[sectionIndex]?.find(
                   (item) => frameIndex >= item.startFrame && frameIndex < item.endFrame,
                 )
               : undefined,
-            frameName = `${framePrefix}${String(frameIndex).padStart(6, "0")}.png`;
-          drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.speaker);
-          const png = await new Promise<Blob>((resolve, reject) =>
-            canvas.toBlob(
-              (blob) => (blob ? resolve(blob) : reject(new Error("画像生成に失敗しました。"))),
-              "image/png",
-            ),
-          );
-          await ffmpeg.writeFile(frameName, new Uint8Array(await png.arrayBuffer()));
-          frameNames.push(frameName);
+              frameName = `${framePrefix}${String(groupFrame).padStart(6, "0")}.png`;
+            drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.speaker);
+            const png = await new Promise<Blob>((resolve, reject) =>
+              canvas.toBlob(
+                (blob) => (blob ? resolve(blob) : reject(new Error("画像生成に失敗しました。"))),
+                "image/png",
+              ),
+            );
+            await ffmpeg.writeFile(frameName, new Uint8Array(await png.arrayBuffer()));
+            frameNames.push(frameName);
+            groupFrame++;
+          }
         }
         await ffmpeg.writeFile(
           wavName,
-          new Uint8Array(
-            encodePcmWav(pcmSections[sectionIndex] ?? new Float32Array(), sampleRate),
-          ),
+          new Uint8Array(encodePcmWav(groupAudio, sampleRate)),
         );
-        const duration = (section.frames / FPS).toFixed(6),
+        const duration = (groupFrames / FPS).toFixed(6),
           exitCode = await ffmpeg.exec([
             "-framerate",
             String(FPS),
@@ -2998,10 +3071,10 @@ export default function Home() {
             mp4Name,
           ]);
         if (exitCode !== 0)
-          throw new Error(`CUT ${cutNumber} のMP4生成に失敗しました。`);
+          throw new Error(`${outputName} のMP4生成に失敗しました。`);
         const movie = await ffmpeg.readFile(mp4Name);
         if (typeof movie === "string") throw new Error("MP4データを取得できませんでした。");
-        zip.file(`${cutNumber}.mp4`, movie);
+        zip.file(`${outputName}.mp4`, movie);
         await Promise.all([
           ...frameNames.map((frameName) => ffmpeg.deleteFile(frameName)),
           ffmpeg.deleteFile(wavName),
@@ -3072,11 +3145,16 @@ export default function Home() {
         }
         return result;
       };
-    for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+    const movieGroups = mediaExportGroups(mediaExportUnit);
+    for (let groupIndex = 0; groupIndex < movieGroups.length; groupIndex++) {
+      const group = movieGroups[groupIndex],
+        groupFrames = group.indexes.reduce(
+          (sum, index) => sum + sections[index].frames,
+          0,
+        );
       for (let attempt = 0; attempt < 2; attempt++) {
       const failure: { error: Error | null } = { error: null };
-      const section = sections[sectionIndex],
-        cutNumber = xdtsCut(section.name),
+      const outputName = safe(group.name),
         target = new ArrayBufferTarget(),
         muxer = new Muxer({
           target,
@@ -3114,29 +3192,45 @@ export default function Home() {
         }
         if (failure.error) throw failure.error;
       };
-      for (let frameIndex = 0; frameIndex < section.frames; frameIndex++) {
-        setBusy(
-          `MP4映像を生成中… CUT ${cutNumber}（${sectionIndex + 1} / ${sections.length}）`,
-        );
-        const cue = movieDialogueBold
-          ? subtitleSections[sectionIndex]?.find(
-              (item) => frameIndex >= item.startFrame && frameIndex < item.endFrame,
-            )
-          : undefined;
-        drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.speaker);
+      let groupFrame = 0;
+      for (const sectionIndex of group.indexes) {
+        const section = sections[sectionIndex], cutNumber = xdtsCut(section.name);
+        for (let frameIndex = 0; frameIndex < section.frames; frameIndex++) {
+          setBusy(
+            `MP4映像を生成中… ${outputName}（${groupIndex + 1} / ${movieGroups.length}）`,
+          );
+          const cue = movieDialogueBold
+            ? subtitleSections[sectionIndex]?.find(
+                (item) => frameIndex >= item.startFrame && frameIndex < item.endFrame,
+              )
+            : undefined;
+          drawMovieFrame(ctx, cutNumber, frameIndex + 1, cue?.speaker);
         const frame = new VideoFrame(canvas, {
-          timestamp: Math.round((frameIndex / FPS) * 1_000_000),
+          timestamp: Math.round((groupFrame / FPS) * 1_000_000),
           duration: Math.round(1_000_000 / FPS),
         });
         try { videoEncoder.encode(frame, {
-          keyFrame: frameIndex === 0 || frameIndex % (FPS * 2) === 0,
+          keyFrame: groupFrame === 0 || groupFrame % (FPS * 2) === 0,
         }); } finally { frame.close(); }
         await drainQueue(videoEncoder, 4);
+          groupFrame++;
+        }
       }
       await videoEncoder.flush();
       if (failure.error) throw failure.error;
       videoEncoder.close();
-      const audio = resample(pcmSections[sectionIndex] ?? new Float32Array()),
+      const groupAudioLength = group.indexes.reduce(
+          (sum, index) => sum + (pcmSections[index]?.length ?? 0),
+          0,
+        ),
+        groupAudio = new Float32Array(groupAudioLength);
+      let groupAudioPosition = 0;
+      for (const sectionIndex of group.indexes) {
+        const samples = pcmSections[sectionIndex] ?? new Float32Array();
+        groupAudio.set(samples, groupAudioPosition);
+        groupAudioPosition += samples.length;
+      }
+      const audio = resample(groupAudio),
         audioBlock = 1024;
       for (let offset = 0; offset < audio.length; offset += audioBlock) {
         const length = Math.min(audioBlock, audio.length - offset),
@@ -3156,14 +3250,15 @@ export default function Home() {
       if (failure.error) throw failure.error;
       audioEncoder.close();
       muxer.finalize();
-      zip.file(`${cutNumber}.mp4`, target.buffer);
-      pcmSections[sectionIndex] = new Float32Array();
+      zip.file(`${outputName}.mp4`, target.buffer);
+      for (const sectionIndex of group.indexes)
+        pcmSections[sectionIndex] = new Float32Array();
       break;
       } catch (error) {
         if (attempt === 1) {
-          throw new Error(`CUT ${cutNumber}（${sectionIndex + 1}/${sections.length}、${section.frames}コマ）のMP4生成に失敗しました。${failure.error?.message ?? (error instanceof Error ? error.message : String(error))}`);
+          throw new Error(`${outputName}（${groupIndex + 1}/${movieGroups.length}、${groupFrames}コマ）のMP4生成に失敗しました。${failure.error?.message ?? (error instanceof Error ? error.message : String(error))}`);
         }
-        setBusy(`CUT ${cutNumber} を再生成しています…`);
+        setBusy(`${outputName} を再生成しています…`);
       } finally {
         if (videoEncoder.state !== "closed") videoEncoder.close();
         if (audioEncoder.state !== "closed") audioEncoder.close();
@@ -3363,8 +3458,8 @@ export default function Home() {
       </header>
       <section className="controlbar">
         <div className="structure-tabs control-structure-tabs" role="tablist" aria-label="シーン・パート表示">
-          <button className={structureView === "scene" ? "active" : ""} onClick={() => setStructureView("scene")}>シーン</button>
-          <button className={structureView === "part" ? "active" : ""} onClick={() => setStructureView("part")}>パート</button>
+          <button className={structureView === "part" ? "active" : ""} onClick={() => setStructureView("part")}>シーン</button>
+          <button className={structureView === "scene" ? "active" : ""} onClick={() => setStructureView("scene")}>パート</button>
           <button className={structureView === "both" ? "active" : ""} onClick={() => setStructureView("both")}>同時</button>
         </div>
         <div className="summary">
@@ -3480,7 +3575,7 @@ export default function Home() {
           }}
         >
           <div className="panel-head">
-            <b>シーン</b>
+            <b>パート</b>
           </div>
           <div className="scene-tints" aria-hidden="true">
             {sceneDividers.map((divider, index) => {
@@ -3552,15 +3647,15 @@ export default function Home() {
                     ?.click();
                 }}
               >
-              <span className="scene-label">SCENE</span>
+              <span className="scene-label">PART {String(index + 1).padStart(2, "0")}</span>
               <span className="scene-duration">
                 {formatDisplayedDuration(sceneDuration(divider.line, nextLine))}
               </span>
               <button
                 type="button"
                 className="scene-delete-button"
-                title="シーンを削除"
-                aria-label="シーンを削除"
+                title="パートを削除"
+                aria-label="パートを削除"
                 onPointerDown={(e) => e.stopPropagation()}
                 onContextMenu={(e) => e.stopPropagation()}
                 onClick={(e) => {
@@ -3614,7 +3709,7 @@ export default function Home() {
           }}
         >
           <div className="panel-head">
-            <b>パート</b>
+            <b>シーン</b>
           </div>
           <div className="scene-tints" aria-hidden="true">
             {partDividers.map((divider, index) => {
@@ -3683,15 +3778,15 @@ export default function Home() {
                 e.currentTarget.querySelector<HTMLInputElement>('input[type="color"]')?.click();
               }}
             >
-              <span className="scene-label">PART</span>
+              <span className="scene-label">SCENE {String(index + 1).padStart(2, "0")}</span>
               <span className="scene-duration">
                 {formatDisplayedDuration(sceneDuration(divider.line, nextLine))}
               </span>
               <button
                 type="button"
                 className="scene-delete-button"
-                title="パートを削除"
-                aria-label="パートを削除"
+                title="シーンを削除"
+                aria-label="シーンを削除"
                 onPointerDown={(e) => e.stopPropagation()}
                 onContextMenu={(e) => e.stopPropagation()}
                 onClick={(e) => {
@@ -4020,20 +4115,32 @@ export default function Home() {
             </label>
             {exportKind === "wav" && (
               <div>
-              <label className="check">
-                <input type="checkbox" checked={wavPerCut} onChange={(e) => setWavPerCut(e.target.checked)} />
-                カット別に出力する
-              </label>
+              <div className="export-unit-options" role="radiogroup" aria-label="音声の出力単位">
+                {(["scene", "part", "cut"] as MediaExportUnit[]).map((unit) => (
+                  <label className="check" key={unit}>
+                    <input type="radio" name="wav-unit" checked={mediaExportUnit === unit} onChange={() => setMediaExportUnit(unit)} />
+                    {unit === "scene" ? "シーン毎に出力" : unit === "part" ? "パート毎に出力" : "カット毎に出力"}
+                  </label>
+                ))}
+              </div>
               <p className="setting-help">
-                {wavPerCut ? "各カットの尺に合わせたWAVをZIPにまとめます。" : "改行の間を含む一本のWAVを書き出します。"}
+                選択した単位ごとの尺に合わせたWAVをZIPにまとめます。
               </p>
               </div>
             )}
             {exportKind === "movie" && (
               <div className="story-settings">
                 <p className="setting-help">
-                  1920×1080・24fps・H.264＋AACのMP4をカットごとに生成し、ZIPにまとめます。
+                  1920×1080・24fps・H.264＋AACのMP4を選択した単位で生成し、ZIPにまとめます。
                 </p>
+                <div className="export-unit-options" role="radiogroup" aria-label="ムービーの出力単位">
+                  {(["scene", "part", "cut"] as MediaExportUnit[]).map((unit) => (
+                    <label className="check" key={unit}>
+                      <input type="radio" name="movie-unit" checked={mediaExportUnit === unit} onChange={() => setMediaExportUnit(unit)} />
+                      {unit === "scene" ? "シーン毎に出力" : unit === "part" ? "パート毎に出力" : "カット毎に出力"}
+                    </label>
+                  ))}
+                </div>
                 <label className="check">
                   <input
                     type="checkbox"
