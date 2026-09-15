@@ -245,9 +245,9 @@ const download = (
 const BLENDER_ADDON = String.raw`bl_info = {
     "name": "Storyboard Camera Information Importer",
     "author": "Storyboard Script Organizer",
-    "version": (1, 0, 2),
+    "version": (1, 0, 3),
     "blender": (3, 6, 0),
-    "location": "Sequencer > Sidebar > Storyboard",
+    "location": "3D View / Sequencer > Sidebar > Storyboard; File > Import",
     "description": "Import scene camera JSON exported by Storyboard Script Organizer",
     "category": "Sequencer",
 }
@@ -379,16 +379,33 @@ class SSO_PT_camera_import(Panel):
     def draw(self, context):
         self.layout.operator(SSO_OT_import_camera_json.bl_idname, icon="IMPORT")
 
-classes = (SSO_OT_import_camera_json, SSO_PT_camera_import)
+class SSO_PT_camera_import_3d(Panel):
+    bl_label = "Storyboard Camera"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Storyboard"
+    def draw(self, context):
+        self.layout.operator(SSO_OT_import_camera_json.bl_idname, icon="IMPORT")
+
+def import_menu(self, context):
+    self.layout.operator(
+        SSO_OT_import_camera_json.bl_idname,
+        text="Storyboard Camera Information (.json)",
+        icon="IMPORT",
+    )
+
+classes = (SSO_OT_import_camera_json, SSO_PT_camera_import, SSO_PT_camera_import_3d)
 
 def register():
     for cls in classes: bpy.utils.register_class(cls)
+    bpy.types.TOPBAR_MT_file_import.append(import_menu)
     if frame_handler not in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.append(frame_handler)
 
 def unregister():
     if frame_handler in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.remove(frame_handler)
+    bpy.types.TOPBAR_MT_file_import.remove(import_menu)
     for cls in reversed(classes): bpy.utils.unregister_class(cls)
 
 if __name__ == "__main__": register()
