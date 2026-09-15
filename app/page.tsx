@@ -3458,8 +3458,8 @@ export default function Home() {
       </header>
       <section className="controlbar">
         <div className="structure-tabs control-structure-tabs" role="tablist" aria-label="シーン・パート表示">
-          <button className={structureView === "part" ? "active" : ""} onClick={() => setStructureView("part")}>シーン</button>
           <button className={structureView === "scene" ? "active" : ""} onClick={() => setStructureView("scene")}>パート</button>
+          <button className={structureView === "part" ? "active" : ""} onClick={() => setStructureView("part")}>シーン</button>
           <button className={structureView === "both" ? "active" : ""} onClick={() => setStructureView("both")}>同時</button>
         </div>
         <div className="summary">
