@@ -42,6 +42,7 @@ type ExportKind =
   | "wav"
   | "movie"
   | "spreadsheet"
+  | "blender"
   | null;
 const FPS = 24;
 const colors = [
@@ -240,6 +241,167 @@ const download = (
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
+
+const BLENDER_ADDON = String.raw`bl_info = {
+    "name": "Storyboard Camera Information Importer",
+    "author": "Storyboard Script Organizer",
+    "version": (1, 0, 0),
+    "blender": (3, 6, 0),
+    "location": "Sequencer > Sidebar > Storyboard",
+    "description": "Import scene camera JSON exported by Storyboard Script Organizer",
+    "category": "Sequencer",
+}
+
+import bpy
+import json
+import os
+from bpy.props import CollectionProperty, StringProperty
+from bpy.types import Operator, Panel, OperatorFileListElement
+from bpy_extras.io_utils import ImportHelper
+from bpy.app.handlers import persistent
+
+def tc(frames, fps=24):
+    frames = max(0, int(frames))
+    seconds, ff = divmod(frames, fps)
+    minutes, ss = divmod(seconds, 60)
+    hours, mm = divmod(minutes, 60)
+    return f"{hours:02d}:{mm:02d}:{ss:02d}:{ff:02d}"
+
+def strips(scene):
+    editor = scene.sequence_editor_create()
+    return getattr(editor, "sequences", None) or getattr(editor, "strips", None)
+
+def add_effect(seq, name, kind, channel, start, end):
+    return seq.new_effect(name=name, type=kind, channel=channel,
+                          frame_start=int(start), frame_end=max(int(start) + 1, int(end)))
+
+def set_text_style(strip, size, x, y, color=(1, 1, 1, 1), box=False):
+    if hasattr(strip, "font_size"): strip.font_size = size
+    if hasattr(strip, "location"): strip.location = (x, y)
+    if hasattr(strip, "color"): strip.color = color
+    if hasattr(strip, "use_box"): strip.use_box = box
+    if box and hasattr(strip, "box_color"): strip.box_color = (0.03, 0.03, 0.03, 0.8)
+
+def rgba(value):
+    value = str(value or "#c44b32").lstrip("#")
+    try: return tuple(int(value[i:i+2], 16) / 255 for i in (0, 2, 4)) + (1,)
+    except Exception: return (0.77, 0.29, 0.20, 1)
+
+def clear_generated(scene):
+    if scene.sequence_editor:
+        seq = strips(scene)
+        for item in list(seq): seq.remove(item)
+    for marker in list(scene.timeline_markers): scene.timeline_markers.remove(marker)
+
+def build_scene(data, source_name):
+    name = str(data.get("scene_name") or os.path.splitext(source_name)[0])
+    scene = bpy.data.scenes.get(name) or bpy.data.scenes.new(name)
+    bpy.context.window.scene = scene
+    clear_generated(scene)
+    scene.render.resolution_x = 1920
+    scene.render.resolution_y = 1080
+    scene.render.resolution_percentage = 100
+    scene.render.fps = int(data.get("fps", 24))
+    scene.frame_start = 1
+    scene.frame_end = max(1, int(data.get("total_frames", 1)))
+    scene["sso_camera_schedule"] = json.dumps(data.get("cuts", []), ensure_ascii=False)
+
+    root = bpy.data.collections.get("SSO_" + name) or bpy.data.collections.new("SSO_" + name)
+    if root.name not in scene.collection.children: scene.collection.children.link(root)
+    part_collections = {}
+    for part in data.get("parts", []):
+        part_name = str(part.get("name") or "PART")
+        collection = bpy.data.collections.get(name + "_" + part_name) or bpy.data.collections.new(name + "_" + part_name)
+        if collection.name not in root.children: root.children.link(collection)
+        part_collections[part_name] = collection
+
+    for index, cut in enumerate(data.get("cuts", [])):
+        cut_name = str(cut.get("cut_number", index + 1))
+        part_name = str(cut.get("part") or "PART")
+        collection = part_collections.get(part_name, root)
+        camera_data = bpy.data.cameras.new(name + "_CUT_" + cut_name)
+        camera = bpy.data.objects.new(name + "_CUT_" + cut_name, camera_data)
+        collection.objects.link(camera)
+        camera.location = (index * 2.0, 0, 0)
+        marker = scene.timeline_markers.new("CUT " + cut_name, frame=int(cut.get("start_frame", 1)))
+        marker.camera = camera
+        if index == 0: scene.camera = camera
+
+    seq = strips(scene)
+    black = add_effect(seq, "SSO_BLACK", "COLOR", 1, 1, scene.frame_end + 1)
+    if hasattr(black, "color"): black.color = (0, 0, 0)
+    cut_text = add_effect(seq, "SSO_CUT_NUMBER", "TEXT", 3, 1, scene.frame_end + 1)
+    cut_text.text = "CUT"
+    set_text_style(cut_text, 64, 0.08, 0.90, (0.9, 0.12, 0.08, 1), False)
+    time_text = add_effect(seq, "SSO_TIMECODE", "TEXT", 3, 1, scene.frame_end + 1)
+    time_text.text = "00:00:00:00"
+    set_text_style(time_text, 44, 0.83, 0.08, (1, 1, 1, 1), False)
+    for cut in data.get("cuts", []):
+        for dialogue in cut.get("dialogue", []):
+            start = int(dialogue.get("start_frame", cut.get("start_frame", 1)))
+            end = int(dialogue.get("end_frame", start + 1))
+            board = add_effect(seq, "SSO_DIALOGUE_" + str(dialogue.get("speaker", "")), "TEXT", 4, start, end)
+            board.text = str(dialogue.get("speaker") or "")
+            set_text_style(board, 52, 0.34, 0.24, rgba(dialogue.get("color")), True)
+    update_overlays(scene)
+    return scene
+
+def update_overlays(scene):
+    raw = scene.get("sso_camera_schedule")
+    if not raw or not scene.sequence_editor: return
+    try: cuts = json.loads(raw)
+    except Exception: return
+    frame = scene.frame_current
+    current = next((c for c in cuts if int(c.get("start_frame", 1)) <= frame <= int(c.get("end_frame", 1))), cuts[-1] if cuts else None)
+    if not current: return
+    seq = strips(scene)
+    cut_strip = seq.get("SSO_CUT_NUMBER")
+    tc_strip = seq.get("SSO_TIMECODE")
+    if cut_strip: cut_strip.text = str(current.get("cut_number", ""))
+    if tc_strip: tc_strip.text = tc(frame - int(current.get("start_frame", 1)) + 1, scene.render.fps)
+
+@persistent
+def frame_handler(scene, depsgraph=None):
+    update_overlays(scene)
+
+class SSO_OT_import_camera_json(Operator, ImportHelper):
+    bl_idname = "sso.import_camera_json"
+    bl_label = "カメラ情報JSONを読み込む"
+    bl_options = {"REGISTER", "UNDO"}
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={"HIDDEN"})
+    files: CollectionProperty(type=OperatorFileListElement)
+
+    def execute(self, context):
+        paths = [os.path.join(self.directory, item.name) for item in self.files] or [self.filepath]
+        for path in paths:
+            with open(path, "r", encoding="utf-8") as handle:
+                build_scene(json.load(handle), os.path.basename(path))
+        self.report({"INFO"}, f"{len(paths)} scene file(s) imported")
+        return {"FINISHED"}
+
+class SSO_PT_camera_import(Panel):
+    bl_label = "Storyboard Camera"
+    bl_space_type = "SEQUENCE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Storyboard"
+    def draw(self, context):
+        self.layout.operator(SSO_OT_import_camera_json.bl_idname, icon="IMPORT")
+
+classes = (SSO_OT_import_camera_json, SSO_PT_camera_import)
+
+def register():
+    for cls in classes: bpy.utils.register_class(cls)
+    if frame_handler not in bpy.app.handlers.frame_change_post:
+        bpy.app.handlers.frame_change_post.append(frame_handler)
+
+def unregister():
+    if frame_handler in bpy.app.handlers.frame_change_post:
+        bpy.app.handlers.frame_change_post.remove(frame_handler)
+    for cls in reversed(classes): bpy.utils.unregister_class(cls)
+
+if __name__ == "__main__": register()
+`;
 const saveToChosenLocation = async (
   name: string,
   body: BlobPart,
@@ -868,6 +1030,117 @@ export default function Home() {
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
   };
+  const exportBlenderCameraInfo = async (name: string) => {
+    const sortedScenes = [...sceneDividers].sort((a, b) => a.line - b.line),
+      sceneStarts =
+        sortedScenes.length && sortedScenes[0].line === 0
+          ? sortedScenes
+          : [
+              {
+                id: "blender-scene-start",
+                line: 0,
+                text: "Scene 1",
+                color: "#808080",
+              },
+              ...sortedScenes,
+            ],
+      zip = new JSZip();
+    sceneStarts.forEach((sceneDivider, sceneIndex) => {
+      const sceneEnd = sceneStarts[sceneIndex + 1]?.line ?? lines,
+        sceneSections = sections.filter(
+          (section) =>
+            section.start >= sceneDivider.line && section.start < sceneEnd,
+        ),
+        usableSections = sceneSections.length
+          ? sceneSections
+          : sections.filter(
+              (section) =>
+                section.start < sceneEnd && section.end > sceneDivider.line,
+            );
+      let sceneFrame = 1;
+      const cuts = usableSections.map((section) => {
+        const part = structureTextAt(partDividers, section.start) || "PART",
+          startFrame = sceneFrame,
+          dialogueItems: {
+            speaker: string;
+            body: string;
+            color: string;
+            start_frame: number;
+            end_frame: number;
+          }[] = [];
+        let localFrame = 0;
+        dialogueLines
+          .slice(section.start, section.end)
+          .forEach((line, index, sectionLines) => {
+            const parsed = parseDialogue(line);
+            if (parsed?.body) {
+              const duration = Math.max(1, readingFrames(parsed.body, cps));
+              dialogueItems.push({
+                speaker: parsed.speaker,
+                body: parsed.body,
+                color:
+                  speakerColors[parsed.speaker] ??
+                  colors[Math.max(0, speakers.indexOf(parsed.speaker)) % colors.length],
+                start_frame: startFrame + localFrame,
+                end_frame: Math.min(
+                  startFrame + section.frames,
+                  startFrame + localFrame + duration,
+                ),
+              });
+              localFrame += duration;
+            }
+            if (index < sectionLines.length - 1) localFrame += 6;
+          });
+        const cut = {
+          cut_number: section.name,
+          part,
+          duration_frames: section.frames,
+          duration_timecode: timecode(section.frames),
+          start_frame: startFrame,
+          end_frame: startFrame + Math.max(1, section.frames) - 1,
+          dialogue: dialogueItems,
+        };
+        sceneFrame += section.frames;
+        return cut;
+      });
+      const partNames = [...new Set(cuts.map((cut) => cut.part))],
+        payload = {
+          format: "storyboard-camera-info",
+          version: 1,
+          fps: FPS,
+          resolution: { width: 1920, height: 1080 },
+          scene_number: sceneIndex + 1,
+          scene_name:
+            sceneDivider.text.trim() || `Scene ${String(sceneIndex + 1).padStart(3, "0")}`,
+          total_frames: cuts.reduce(
+            (sum, cut) => sum + cut.duration_frames,
+            0,
+          ),
+          parts: partNames.map((partName) => ({
+            name: partName,
+            cut_numbers: cuts
+              .filter((cut) => cut.part === partName)
+              .map((cut) => cut.cut_number),
+          })),
+          cuts,
+        };
+      zip.file(
+        `${String(sceneIndex + 1).padStart(3, "0")}.json`,
+        JSON.stringify(payload, null, 2),
+      );
+    });
+    download(
+      `${name}_blender_camera_json.zip`,
+      await zip.generateAsync({ type: "blob" }),
+      "application/zip",
+    );
+  };
+  const downloadBlenderAddon = () =>
+    download(
+      "storyboard_camera_importer.py",
+      BLENDER_ADDON,
+      "text/x-python;charset=utf-8",
+    );
   const speakers = useMemo(() => {
     const list: string[] = [];
     dialogueLines.forEach((l) => {
@@ -2905,6 +3178,8 @@ export default function Home() {
           ? "xdts_export"
           : kind === "storyboard"
             ? "storyboard"
+            : kind === "blender"
+              ? "camera_info"
             : "script",
     );
     if (kind === "xdts")
@@ -2933,6 +3208,7 @@ export default function Home() {
     else if (exportKind === "voicevox")
       download(`${name}.csv`, "\ufeff" + voicevox(), "text/csv;charset=utf-8");
     else if (exportKind === "spreadsheet") await exportSpreadsheet(name);
+    else if (exportKind === "blender") await exportBlenderCameraInfo(name);
     else if (exportKind === "wav") {
       try {
         await exportVoicevoxWav(name);
@@ -3059,6 +3335,9 @@ export default function Home() {
               </button>
               <button onClick={() => openExport("spreadsheet")}>
                 スプレッドシート（XLSX / CSV）
+              </button>
+              <button onClick={() => openExport("blender")}>
+                Blender向け カメラ情報
               </button>
             </div>
           )}
@@ -3719,6 +3998,8 @@ export default function Home() {
                       ? "カット別ムービー（MP4 ZIP）"
                       : exportKind === "spreadsheet"
                         ? "スプレッドシート書き出し"
+                        : exportKind === "blender"
+                          ? "Blender向け カメラ情報"
                         : "保存・書き出し"}
             </h2>
             <label>
@@ -3798,6 +4079,22 @@ export default function Home() {
                 </label>
                 <p className="setting-help">
                   XLSXは「カット一覧」「キャラクター別セリフ」「シーン別集計」を作成し、各見出しから並べ替えできます。
+                </p>
+              </div>
+            )}
+            {exportKind === "blender" && (
+              <div className="story-settings">
+                <p className="setting-help">
+                  シーンごとのJSONを番号順（001.json、002.json…）でZIPにまとめます。シーン尺、パート別カット、カット尺、セリフ情報を収録します。
+                </p>
+                <p className="setting-help">
+                  Blenderアドオンで読み込むと、パート別カメラコレクション、カメラマーカー、黒背景、カット番号、24fpsタイムコード、話者別セリフボールドをVSEへ配置します。
+                </p>
+                <button type="button" onClick={downloadBlenderAddon}>
+                  Blenderアドオン（.py）をダウンロード
+                </button>
+                <p className="setting-help">
+                  Blender 3.6以上を対象とし、3.6〜5.2のVSE API差を吸収する構成です。Blenderの「プリファレンス → アドオン → インストール」で.pyを追加してください。
                 </p>
               </div>
             )}
