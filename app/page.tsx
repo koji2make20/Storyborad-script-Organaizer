@@ -246,11 +246,11 @@ const download = (
 const BLENDER_ADDON = String.raw`bl_info = {
     "name": "Storyboard Camera Information Importer",
     "author": "Storyboard Script Organizer",
-    "version": (1, 0, 3),
+    "version": (1, 1, 0),
     "blender": (3, 6, 0),
     "location": "3D View / Sequencer > Sidebar > Storyboard; File > Import",
-    "description": "Import scene camera JSON exported by Storyboard Script Organizer",
-    "category": "Sequencer",
+    "description": "Add camera collections and timeline camera markers from Storyboard JSON",
+    "category": "Import-Export",
 }
 
 import bpy
@@ -259,40 +259,11 @@ import os
 from bpy.props import CollectionProperty, StringProperty
 from bpy.types import Operator, Panel, OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper
-from bpy.app.handlers import persistent
-
-def tc(frames, fps=24):
-    frames = max(0, int(frames))
-    seconds, ff = divmod(frames, fps)
-    minutes, ss = divmod(seconds, 60)
-    hours, mm = divmod(minutes, 60)
-    return f"{hours:02d}:{mm:02d}:{ss:02d}:{ff:02d}"
-
-def strips(scene):
-    editor = scene.sequence_editor_create()
-    return getattr(editor, "sequences", None) or getattr(editor, "strips", None)
-
-def add_effect(seq, name, kind, channel, start, end):
-    return seq.new_effect(name, kind, channel,
-                          int(start), max(int(start) + 1, int(end)))
-
-def set_text_style(strip, size, x, y, color=(1, 1, 1, 1), box=False):
-    if hasattr(strip, "font_size"): strip.font_size = size
-    if hasattr(strip, "location"): strip.location = (x, y)
-    if hasattr(strip, "color"): strip.color = color
-    if hasattr(strip, "use_box"): strip.use_box = box
-    if box and hasattr(strip, "box_color"): strip.box_color = (0.03, 0.03, 0.03, 0.8)
-
-def rgba(value):
-    value = str(value or "#c44b32").lstrip("#")
-    try: return tuple(int(value[i:i+2], 16) / 255 for i in (0, 2, 4)) + (1,)
-    except Exception: return (0.77, 0.29, 0.20, 1)
 
 def build_scene(data, source_name):
-    name = str(data.get("scene_name") or os.path.splitext(source_name)[0])
+    name = str(data.get("part_name") or data.get("scene_name") or os.path.splitext(source_name)[0])
     scene = bpy.context.scene
     scene.frame_end = max(scene.frame_end, int(data.get("total_frames", 1)))
-    scene["sso_camera_schedule"] = json.dumps(data.get("cuts", []), ensure_ascii=False)
 
     root = bpy.data.collections.get("SSO_" + name) or bpy.data.collections.new("SSO_" + name)
     if root.name not in scene.collection.children: scene.collection.children.link(root)
@@ -307,50 +278,13 @@ def build_scene(data, source_name):
         cut_name = str(cut.get("cut_number", index + 1))
         part_name = str(cut.get("part") or "PART")
         collection = part_collections.get(part_name, root)
-        camera_data = bpy.data.cameras.new(name + "_CUT_" + cut_name)
-        camera = bpy.data.objects.new(name + "_CUT_" + cut_name, camera_data)
+        camera_data = bpy.data.cameras.new(cut_name)
+        camera = bpy.data.objects.new(cut_name, camera_data)
         collection.objects.link(camera)
         camera.location = (index * 2.0, 0, 0)
         marker = scene.timeline_markers.new("CUT " + cut_name, frame=int(cut.get("start_frame", 1)))
         marker.camera = camera
-        if index == 0: scene.camera = camera
-
-    seq = strips(scene)
-    black = add_effect(seq, "SSO_BLACK", "COLOR", 1, 1, scene.frame_end + 1)
-    if hasattr(black, "color"): black.color = (0, 0, 0)
-    cut_text = add_effect(seq, "SSO_CUT_NUMBER", "TEXT", 3, 1, scene.frame_end + 1)
-    cut_text.text = "CUT"
-    set_text_style(cut_text, 64, 0.08, 0.90, (0.9, 0.12, 0.08, 1), False)
-    time_text = add_effect(seq, "SSO_TIMECODE", "TEXT", 3, 1, scene.frame_end + 1)
-    time_text.text = "00:00:00:00"
-    set_text_style(time_text, 44, 0.83, 0.08, (1, 1, 1, 1), False)
-    for cut in data.get("cuts", []):
-        for dialogue in cut.get("dialogue", []):
-            start = int(dialogue.get("start_frame", cut.get("start_frame", 1)))
-            end = int(dialogue.get("end_frame", start + 1))
-            board = add_effect(seq, "SSO_DIALOGUE_" + str(dialogue.get("speaker", "")), "TEXT", 4, start, end)
-            board.text = str(dialogue.get("speaker") or "")
-            set_text_style(board, 52, 0.34, 0.24, rgba(dialogue.get("color")), True)
-    update_overlays(scene)
     return scene
-
-def update_overlays(scene):
-    raw = scene.get("sso_camera_schedule")
-    if not raw or not scene.sequence_editor: return
-    try: cuts = json.loads(raw)
-    except Exception: return
-    frame = scene.frame_current
-    current = next((c for c in cuts if int(c.get("start_frame", 1)) <= frame <= int(c.get("end_frame", 1))), cuts[-1] if cuts else None)
-    if not current: return
-    seq = strips(scene)
-    cut_strip = seq.get("SSO_CUT_NUMBER")
-    tc_strip = seq.get("SSO_TIMECODE")
-    if cut_strip: cut_strip.text = str(current.get("cut_number", ""))
-    if tc_strip: tc_strip.text = tc(frame - int(current.get("start_frame", 1)) + 1, scene.render.fps)
-
-@persistent
-def frame_handler(scene, depsgraph=None):
-    update_overlays(scene)
 
 class SSO_OT_import_camera_json(Operator, ImportHelper):
     bl_idname = "sso.import_camera_json"
@@ -369,7 +303,7 @@ class SSO_OT_import_camera_json(Operator, ImportHelper):
         for path in paths:
             with open(path, "r", encoding="utf-8") as handle:
                 build_scene(json.load(handle), os.path.basename(path))
-        self.report({"INFO"}, f"{len(paths)} scene file(s) imported")
+        self.report({"INFO"}, f"{len(paths)} camera file(s) imported")
         return {"FINISHED"}
 
 class SSO_PT_camera_import(Panel):
@@ -400,12 +334,8 @@ classes = (SSO_OT_import_camera_json, SSO_PT_camera_import, SSO_PT_camera_import
 def register():
     for cls in classes: bpy.utils.register_class(cls)
     bpy.types.TOPBAR_MT_file_import.append(import_menu)
-    if frame_handler not in bpy.app.handlers.frame_change_post:
-        bpy.app.handlers.frame_change_post.append(frame_handler)
 
 def unregister():
-    if frame_handler in bpy.app.handlers.frame_change_post:
-        bpy.app.handlers.frame_change_post.remove(frame_handler)
     bpy.types.TOPBAR_MT_file_import.remove(import_menu)
     for cls in reversed(classes): bpy.utils.unregister_class(cls)
 
@@ -556,6 +486,9 @@ export default function Home() {
     [cps, setCps] = useState(8),
     [autoNormalize, setAutoNormalize] = useState(true),
     [mediaExportUnit, setMediaExportUnit] = useState<MediaExportUnit>("cut"),
+    [blenderExportUnit, setBlenderExportUnit] = useState<"part" | "scene">(
+      "part",
+    ),
     [mode, setMode] = useState<"frames" | "frameCount" | "seconds">("frames"),
     [firstCutName, setFirstCutName] = useState("1"),
     [cuts, setCuts] = useState<Cut[]>([
@@ -1071,9 +1004,13 @@ export default function Home() {
     );
   };
   const exportBlenderCameraInfo = async (name: string) => {
-    // After the user-facing name swap, sceneDividers are displayed as PART.
-    // Blender camera data is therefore split at these part boundaries.
-    const sortedScenes = [...sceneDividers].sort((a, b) => a.line - b.line),
+    const outerDividers =
+        blenderExportUnit === "part" ? sceneDividers : partDividers,
+      innerDividers =
+        blenderExportUnit === "part" ? partDividers : sceneDividers,
+      outerLabel = blenderExportUnit === "part" ? "Part" : "Scene",
+      innerLabel = blenderExportUnit === "part" ? "SCENE" : "PART",
+      sortedScenes = [...outerDividers].sort((a, b) => a.line - b.line),
       sceneStarts =
         sortedScenes.length && sortedScenes[0].line === 0
           ? sortedScenes
@@ -1081,7 +1018,7 @@ export default function Home() {
               {
                 id: "blender-scene-start",
                 line: 0,
-                text: "Part 1",
+                text: `${outerLabel} 1`,
                 color: "#808080",
               },
               ...sortedScenes,
@@ -1101,7 +1038,7 @@ export default function Home() {
             );
       let sceneFrame = 1;
       const cuts = usableSections.map((section) => {
-        const part = structureTextAt(partDividers, section.start) || "SCENE",
+        const part = structureTextAt(innerDividers, section.start) || innerLabel,
           startFrame = sceneFrame,
           dialogueItems: {
             speaker: string;
@@ -1149,14 +1086,15 @@ export default function Home() {
         payload = {
           format: "storyboard-camera-info",
           version: 2,
+          export_unit: blenderExportUnit,
           fps: FPS,
           resolution: { width: 1920, height: 1080 },
           scene_number: sceneIndex + 1,
           scene_name:
-            sceneDivider.text.trim() || `Part ${String(sceneIndex + 1).padStart(3, "0")}`,
+            sceneDivider.text.trim() || `${outerLabel} ${String(sceneIndex + 1).padStart(3, "0")}`,
           part_number: sceneIndex + 1,
           part_name:
-            sceneDivider.text.trim() || `Part ${String(sceneIndex + 1).padStart(3, "0")}`,
+            sceneDivider.text.trim() || `${outerLabel} ${String(sceneIndex + 1).padStart(3, "0")}`,
           total_frames: cuts.reduce(
             (sum, cut) => sum + cut.duration_frames,
             0,
@@ -4205,17 +4143,30 @@ export default function Home() {
             )}
             {exportKind === "blender" && (
               <div className="story-settings">
+                <div className="export-unit-options" role="radiogroup" aria-label="Blenderカメラ情報の出力単位">
+                  {(["part", "scene"] as const).map((unit) => (
+                    <label className="check" key={unit}>
+                      <input
+                        type="radio"
+                        name="blender-unit"
+                        checked={blenderExportUnit === unit}
+                        onChange={() => setBlenderExportUnit(unit)}
+                      />
+                      {unit === "part" ? "パート毎に出力" : "シーン毎に出力"}
+                    </label>
+                  ))}
+                </div>
                 <p className="setting-help">
-                  パートごとのJSONを番号順（001.json、002.json…）でZIPにまとめます。パート尺、シーン別カット、カット尺、セリフ情報を収録します。
+                  選択した単位ごとのJSONを番号順（001.json、002.json…）でZIPにまとめます。全体尺、内包するカット番号、カット尺、セリフ情報を収録します。
                 </p>
                 <p className="setting-help">
-                  Blenderアドオンで読み込むと、パート別カメラコレクション、カメラマーカー、黒背景、カット番号、24fpsタイムコード、話者別セリフボールドをVSEへ配置します。
+                  Blenderアドオンで読み込むと、区分別コレクション内へカット番号と同名のカメラを追加し、カット開始位置へカメラマーカーを配置します。
                 </p>
                 <button type="button" onClick={downloadBlenderAddon}>
                   Blenderアドオン（.py）をダウンロード
                 </button>
                 <p className="setting-help">
-                  Blender 3.6以上を対象とし、3.6〜5.2のVSE API差を吸収する構成です。Blenderの「プリファレンス → アドオン → インストール」で.pyを追加してください。
+                  Blender 3.6〜5.2を対象としています。Blenderの「プリファレンス → アドオン → インストール」で.pyを追加してください。
                 </p>
               </div>
             )}
