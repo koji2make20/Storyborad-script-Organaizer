@@ -502,6 +502,7 @@ export default function Home() {
     [resizeId, setResizeId] = useState<string | null>(null),
     [exportKind, setExportKind] = useState<ExportKind>(null),
     [exportName, setExportName] = useState("storyboard"),
+    [movieIncludeAudio, setMovieIncludeAudio] = useState(true),
     [movieDialogueBold, setMovieDialogueBold] = useState(false),
     [includeAction, setIncludeAction] = useState(false),
     [gridCount, setGridCount] = useState(6),
@@ -2860,6 +2861,56 @@ export default function Home() {
     }
     download(`${name}_wav.zip`, await zip.generateAsync({ type: "blob" }), "application/zip");
   };
+  const renderSilentMovieSections = () => {
+    const sampleRate = 24000,
+      pcmSections = sections.map(
+        (section) =>
+          new Float32Array(
+            Math.max(0, Math.round((section.frames / FPS) * sampleRate)),
+          ),
+      ),
+      subtitleSections: {
+        startFrame: number;
+        endFrame: number;
+        body: string;
+        speaker: string;
+      }[][] = [];
+    let activeSpeaker = "";
+    sections.forEach((section) => {
+      const cues: {
+          startFrame: number;
+          endFrame: number;
+          body: string;
+          speaker: string;
+        }[] = [],
+        rows = dialogueLines.slice(section.start, section.end);
+      let position = 0;
+      rows.forEach((line, index) => {
+        const parsed = parseDialogue(line);
+        let body = "", speaker = activeSpeaker;
+        if (parsed) {
+          activeSpeaker = parsed.speaker;
+          speaker = parsed.speaker;
+          body = parsed.body;
+        } else if (line.trim()) {
+          body = line.trim();
+        }
+        if (body && position < section.frames) {
+          const duration = Math.max(1, readingFrames(body, cps));
+          cues.push({
+            startFrame: position,
+            endFrame: Math.min(section.frames, position + duration),
+            body,
+            speaker,
+          });
+          position += duration;
+        }
+        if (index < rows.length - 1) position += 6;
+      });
+      subtitleSections.push(cues);
+    });
+    return { sampleRate, pcmSections, subtitleSections };
+  };
   const movieTimecode = (frames: number) => {
     const minutes = Math.floor(frames / (FPS * 60)),
       seconds = Math.floor(frames / FPS) % 60,
@@ -2894,7 +2945,9 @@ export default function Home() {
     const { FFmpeg } = await import("@ffmpeg/ffmpeg"),
       ffmpeg = new FFmpeg(),
       basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "",
-      { sampleRate, pcmSections, subtitleSections } = await renderVoicevoxPcmSections(),
+      { sampleRate, pcmSections, subtitleSections } = movieIncludeAudio
+        ? await renderVoicevoxPcmSections()
+        : renderSilentMovieSections(),
       zip = new JSZip(),
       canvas = document.createElement("canvas");
     canvas.width = 1920;
@@ -3067,7 +3120,9 @@ export default function Home() {
       audioSupport = await AudioEncoder.isConfigSupported(audioConfig);
     if (!audioSupport.supported)
       throw new Error("この端末ではAACエンコーダーを利用できません。");
-    const { sampleRate, pcmSections, subtitleSections } = await renderVoicevoxPcmSections(),
+    const { sampleRate, pcmSections, subtitleSections } = movieIncludeAudio
+        ? await renderVoicevoxPcmSections()
+        : renderSilentMovieSections(),
       zip = new JSZip(),
       canvas = document.createElement("canvas");
     canvas.width = 1920;
@@ -4085,6 +4140,19 @@ export default function Home() {
                     </label>
                   ))}
                 </div>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={movieIncludeAudio}
+                    onChange={(e) => setMovieIncludeAudio(e.target.checked)}
+                  />
+                  音声を出力する
+                </label>
+                {!movieIncludeAudio && (
+                  <p className="setting-help">
+                    VOICEVOXへ接続せず、無音で書き出します。セリフボールドは台本の尺計算に合わせて表示できます。
+                  </p>
+                )}
                 <label className="check">
                   <input
                     type="checkbox"
