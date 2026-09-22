@@ -503,6 +503,8 @@ export default function Home() {
     [exportKind, setExportKind] = useState<ExportKind>(null),
     [exportName, setExportName] = useState("storyboard"),
     [movieIncludeAudio, setMovieIncludeAudio] = useState(true),
+    [movieShowCutNumber, setMovieShowCutNumber] = useState(true),
+    [movieShowTimecode, setMovieShowTimecode] = useState(true),
     [movieDialogueBold, setMovieDialogueBold] = useState(false),
     [includeAction, setIncludeAction] = useState(false),
     [gridCount, setGridCount] = useState(6),
@@ -2927,15 +2929,20 @@ export default function Home() {
   ) => {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, 1920, 1080);
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#ef3f35";
-    ctx.font = '700 64px "Yu Gothic UI", sans-serif';
-    ctx.fillText(cutNumber, 160, 80, 240);
-    ctx.textAlign = "right";
-    ctx.fillStyle = "#fff";
-    ctx.font = '600 54px "Consolas", "Courier New", monospace';
-    ctx.fillText(movieTimecode(frameNumber), 1880, 1020);
+    if (movieShowCutNumber) {
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#ef3f35";
+      ctx.font = '700 64px "Yu Gothic UI", sans-serif';
+      ctx.fillText(cutNumber, 160, 80, 240);
+    }
+    if (movieShowTimecode) {
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fff";
+      ctx.font = '600 54px "Consolas", "Courier New", monospace';
+      ctx.fillText(movieTimecode(frameNumber), 1880, 1020);
+    }
     if (!boldSpeaker) return;
     const speakerIndex = Math.max(0, speakers.indexOf(boldSpeaker)),
       color = speakerColors[boldSpeaker] ?? colors[speakerIndex % colors.length];
@@ -4153,14 +4160,32 @@ export default function Home() {
                     VOICEVOXへ接続せず、無音で書き出します。セリフボールドは台本の尺計算に合わせて表示できます。
                   </p>
                 )}
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={movieDialogueBold}
-                    onChange={(e) => setMovieDialogueBold(e.target.checked)}
-                  />
-                  セリフボールドを追加する
-                </label>
+                <div className="export-unit-options" role="group" aria-label="ムービーに表示する情報">
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={movieShowCutNumber}
+                      onChange={(e) => setMovieShowCutNumber(e.target.checked)}
+                    />
+                    カットナンバー
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={movieShowTimecode}
+                      onChange={(e) => setMovieShowTimecode(e.target.checked)}
+                    />
+                    タイムコード
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={movieDialogueBold}
+                      onChange={(e) => setMovieDialogueBold(e.target.checked)}
+                    />
+                    セリフボールド
+                  </label>
+                </div>
                 {movieDialogueBold && (
                   <div className="color-settings">
                     <b>話者別セリフボールドの色</b>
@@ -4185,7 +4210,9 @@ export default function Home() {
                 )}
                 {movieDialogueBold && (
                   <p className="setting-help">
-                    VOICEVOX音声の発話中だけ、画面中央より少し左下に表示します。
+                    {movieIncludeAudio
+                      ? "VOICEVOX音声の発話中だけ、画面中央より少し左下に表示します。"
+                      : "台本から算出した発話タイミングで、画面中央より少し左下に表示します。"}
                   </p>
                 )}
               </div>
