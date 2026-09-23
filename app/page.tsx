@@ -2475,7 +2475,7 @@ export default function Home() {
             top + 18,
             square - 36,
             h - 36,
-            20,
+            30,
             "#444",
           );
         let previousSpeaker = "";
